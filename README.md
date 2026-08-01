@@ -1,5 +1,7 @@
 # Hilbert's Sixth Problem — Lectures & Visualizations
 
+### ▶ [Open the visualizations](https://chengyusheu.github.io/hilbert-sixth-lectures/)
+
 An **unofficial, section-by-section teaching companion** to
 
 > Yu Deng, Zaher Hani, Xiao Ma,
@@ -49,7 +51,7 @@ Each lecture is a standalone Markdown file (GitHub renders the LaTeX). Each has 
 | 15 | [Hydrodynamic limits: compressible Euler](lectures/15-compressible-euler.md) | [Hilbert expansion](viz/15-hilbert-expansion.html) | §1.3.2, Theorem 3 |
 | 16 | [What is and is not proved: scope, critique, open problems](lectures/16-scope-and-critique.md) | — | §1.1, §1.5; [arXiv:2504.06297](https://arxiv.org/abs/2504.06297) |
 
-**[Open the visualization index →](index.html)** (or browse `viz/`)
+**[Open the visualization index →](https://chengyusheu.github.io/hilbert-sixth-lectures/)** (or browse `viz/` locally)
 
 ---
 
@@ -70,9 +72,9 @@ No build step, no package manager, no server required.
 git clone https://github.com/ChengyuSheu/hilbert-sixth-lectures.git
 ```
 
-Then open `index.html` in any browser, or double-click any file in `viz/`. Each visualization is one self-contained HTML file (vanilla JS + canvas/SVG). KaTeX is loaded from a CDN for the formula panels; the simulations themselves work offline without it.
+Then open `index.html` in any browser, or double-click any file in `viz/`. Each visualization is one self-contained HTML file (vanilla JS + canvas/SVG), loaded as classic scripts specifically so that `file://` works — no server, no module/CORS problems. KaTeX comes from a CDN for the formula panels; the simulations themselves run fine offline without it.
 
-To serve over GitHub Pages, enable Pages on the `main` branch root — `index.html` is the entry point.
+Pages is already enabled for this repository, serving `index.html` from the `main` branch root.
 
 ---
 
