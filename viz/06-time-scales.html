@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The time-scale ladder</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid side">
+    <div class="panel">
+      <h2>Mean free times available</h2>
+      <canvas id="cv"></canvas>
+      <div class="controls" id="ctl"></div>
+    </div>
+    <div>
+      <div class="panel"><h2>Numbers</h2><div id="ro"></div></div>
+      <div class="panel" style="margin-top:1rem"><h2>Verdict</h2><div class="note" id="verdict"></div></div>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:1rem">
+    <h2>Layer degradation (schematic)</h2>
+    <canvas id="cl"></canvas>
+    <div class="note">
+      <strong>Caricature.</strong> Each layer is modelled as degrading the cumulant exponent by a
+      fixed factor $C$, so the ansatz $\varepsilon^{\alpha_*\lvert H\rvert}$ stops being informative once
+      $C^{L}\gtrsim\lvert\log\varepsilon\rvert$, i.e. $L\lesssim\log\lvert\log\varepsilon\rvert$.
+      The <em>shape</em> of the conclusion is faithful; the per-layer law is invented for exposition.
+      See <a href="../lectures/08-cumulants-and-ansatz.md">Lecture 08</a> §7.
+    </div>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, readout, fitCanvas, cssVar } = window.H6;
+  head({
+    title: 'The time-scale ladder',
+    maps: '[H6] Theorem 1 hypothesis; Theorem 2 hypothesis (§1.3.1)',
+    lecture: '06-time-scales.md',
+    prev: '05-chaos-cumulants.html', next: '07-collision-tree.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1.7);
+  const cl = fitCanvas(document.getElementById('cl'), 3.4);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+  const verdict = document.getElementById('verdict');
+
+  let L = 1.0;          // log10 |log10 eps|
+  let delta = 0.5;      // hydrodynamic parameter
+  let Tfin = 1.0;       // fluid time
+  let C = 2.0;          // per-layer degradation factor (caricature)
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('log₁₀|log₁₀ ε|', { min: 0.3, max: 100, step: 0.1, value: L, fmt: v => v.toFixed(1) },
+    v => { L = v; draw(); }).wrap);
+  ctl.append(slider('δ', { min: 0.05, max: 1, step: 0.01, value: delta, fmt: v => v.toFixed(2) },
+    v => { delta = v; draw(); }).wrap);
+  ctl.append(slider('T_fin (fluid time)', { min: 0.2, max: 4, step: 0.1, value: Tfin, fmt: v => v.toFixed(1) },
+    v => { Tfin = v; draw(); }).wrap);
+  ctl.append(slider('C (layer loss)', { min: 1.2, max: 4, step: 0.1, value: C, fmt: v => v.toFixed(1) },
+    v => { C = v; draw(); }).wrap);
+
+  const LANFORD = 0.4;
+  const lnAbsLog = () => Math.pow(10, L) * Math.LN10;         // |log eps| in nats
+  const Lambda = () => Math.sqrt(Math.log(lnAbsLog()));
+
+  function draw() {
+    const W = ctx.W, H = ctx.H;
+    ctx.clearRect(0, 0, W, H);
+    const dim = cssVar('--ink-dim'), good = cssVar('--good'), bad = cssVar('--bad'),
+          acc = cssVar('--accent'), line = cssVar('--line'), gold = cssVar('--gold');
+
+    const A = Lambda();
+    const need = Math.max(1, 1 / delta) * Math.max(1, Tfin / delta);   // ≍ δ⁻²T_fin
+    const MAX = Math.max(need, A, 8) * 1.15;
+    const pad = 130;
+    const X = t => pad + (t / MAX) * (W - pad - 30);
+
+    const rows = [
+      { y: .22, label: 'Lanford 1975', val: LANFORD, col: bad,
+        note: 'fixed constant — does not move' },
+      { y: .48, label: '[H6] Theorem 1', val: A, col: good,
+        note: '(log|log ε|)^½ — diverges' },
+      { y: .74, label: 'needed for fluid', val: need, col: acc,
+        note: '≍ δ⁻²·T_fin' },
+    ];
+
+    ctx.font = '12px ui-monospace, monospace';
+    rows.forEach(r => {
+      const y = r.y * H;
+      ctx.strokeStyle = line; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - 30, y); ctx.stroke();
+      ctx.fillStyle = r.col;
+      ctx.beginPath(); ctx.roundRect(pad, y - 9, Math.max(2, X(r.val) - pad), 18, 4); ctx.fill();
+      ctx.fillStyle = dim; ctx.textAlign = 'right';
+      ctx.fillText(r.label, pad - 10, y + 4);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = r.col;
+      ctx.fillText(r.val.toFixed(2), X(r.val) + 6, y + 4);
+      ctx.fillStyle = dim; ctx.font = '10px ui-monospace, monospace';
+      ctx.fillText(r.note, pad + 6, y + 22);
+      ctx.font = '12px ui-monospace, monospace';
+    });
+
+    // gap shading between H6 bar and requirement
+    if (A < need) {
+      ctx.fillStyle = bad + '22';
+      ctx.fillRect(X(A), H * .40, X(need) - X(A), H * .42);
+    }
+    ctx.strokeStyle = gold; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(X(need), H * .12); ctx.lineTo(X(need), H * .88); ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = dim; ctx.font = '11px ui-monospace, monospace'; ctx.textAlign = 'left';
+    ctx.fillText('α·A·t_fin  (mean free times) →', pad, H - 8);
+
+    // required epsilon for the fluid target:  Λ(ε) = need  ⇒  |log ε| = exp(need²)
+    const reqLnAbs = Math.exp(need * need);
+    const reqL = Math.log10(reqLnAbs / Math.LN10);
+
+    ro.set([
+      ['ε (as 10^−10^L)', 'L = ' + L.toFixed(1)],
+      ['|log ε|', lnAbsLog().toExponential(2)],
+      ['Λ(ε) = (log|log ε|)^½', A.toFixed(3), A >= need ? 'hi' : 'lo'],
+      ['Lanford bound', LANFORD.toFixed(2), 'lo'],
+      ['δ', delta.toFixed(2)],
+      ['T_fin', Tfin.toFixed(1)],
+      ['needed ≍ δ⁻²·T_fin', need.toFixed(2)],
+      ['— to reach it —', ''],
+      ['need log₁₀|log₁₀ ε| ≥', reqL.toFixed(2)],
+      ['i.e. ε ≲', '10^−10^' + reqL.toFixed(1), 'lo'],
+    ]);
+
+    verdict.innerHTML = A >= need
+      ? `<strong>Reachable.</strong> At this ε the Boltzmann description survives ${A.toFixed(2)} mean free times, past the ${need.toFixed(2)} the fluid limit needs. Now halve δ and watch the requirement grow like δ⁻² while the green bar barely moves.`
+      : `<strong>Not reachable at this ε.</strong> You need Λ(ε) ≥ ${need.toFixed(2)}, i.e. ε ≲ 10^−10^${reqL.toFixed(1)}. That is the honest cost of the iterated limit — doubly exponential in δ⁻². It is <em>finite</em>, which is all the theorem needs, and absurd, which is what the theorem does not hide.`;
+
+    drawLayers();
+  }
+
+  function drawLayers() {
+    const W = cl.W, H = cl.H;
+    cl.clearRect(0, 0, W, H);
+    const dim = cssVar('--ink-dim'), good = cssVar('--good'), bad = cssVar('--bad'), line = cssVar('--line');
+    const absLog = lnAbsLog();
+    // exponent starts at 1 and is divided by C each layer; informative while alpha*|log eps| >> 1
+    const maxLayers = 26;
+    const wCell = (W - 40) / maxLayers;
+    let alive = 0;
+    for (let k = 0; k < maxLayers; k++) {
+      const expo = Math.pow(C, -k);
+      const smallness = expo * absLog;        // -log of the bound; > ~1 means still informative
+      const ok = smallness > 1;
+      if (ok) alive = k + 1;
+      cl.fillStyle = ok ? good + 'aa' : bad + '55';
+      cl.fillRect(20 + k * wCell + 1, H * 0.28, wCell - 2, H * 0.34);
+      cl.fillStyle = dim; cl.font = '9px ui-monospace, monospace'; cl.textAlign = 'center';
+      if (k % 2 === 0) cl.fillText(String(k), 20 + k * wCell + wCell / 2, H * 0.78);
+    }
+    cl.textAlign = 'left';
+    cl.fillStyle = dim; cl.font = '11px ui-monospace, monospace';
+    cl.fillText('layer ℓ →', 20, H * 0.94);
+    cl.fillStyle = cssVar('--ink');
+    cl.fillText(`layers that still say something: ${alive}   (log|log ε| = ${Math.log(absLog).toFixed(2)})`, 20, H * 0.18);
+    cl.strokeStyle = line;
+    cl.strokeRect(20, H * 0.28, W - 40, H * 0.34);
+  }
+
+  draw();
+  window.addEventListener('resize', draw);
+  foot('Λ(ε) uses natural logarithms. The Lanford bar is drawn at an illustrative 0.4 mean free times — its exact value depends on the norm and the datum; what matters is that it is a constant.');
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The hydrodynamic limit</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid two">
+    <div class="panel">
+      <h2>Relaxation onto the Maxwellian manifold</h2>
+      <canvas id="cv"></canvas>
+      <div class="note">
+        Collisions project the distribution onto the $(d+2)$-parameter Maxwellian manifold; transport then
+        makes it <em>slide along</em> it. That sliding motion is the fluid equation. As $\delta\to0$ (i.e.
+        $\alpha=\delta^{-1}\to\infty$) the projection becomes instantaneous relative to the sliding — that
+        separation of scales <strong>is</strong> the hydrodynamic limit.
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Scale separation and its price</h2>
+      <canvas id="cs"></canvas>
+      <div class="controls" id="ctl"></div>
+    </div>
+  </div>
+  <div class="grid two" style="margin-top:1rem">
+    <div class="panel"><h2>Readout</h2><div id="ro"></div></div>
+    <div class="panel">
+      <h2>Theorem 2</h2>
+      <p style="font-size:.86rem">
+        $\partial_tu+u\cdot\nabla u-\mu_1\Delta u=-\nabla p$, $\operatorname{div}u=0$,
+        $\partial_t\rho+u\cdot\nabla\rho-\mu_2\Delta\rho=0$, under
+        $\max(1,\delta^{-1})\max(1,\delta^{-1}T_{\mathrm{fin}})\ll(\log\lvert\log\varepsilon\rvert)^{1/2}$,
+        with $f_1$ approximated to $\lesssim\delta^{3/2}$ in $L^1$ and the empirical observables
+        $u_{\mathrm{em}}[\psi],\rho_{\mathrm{em}}[\psi]$ converging <strong>in probability</strong>.
+        The viscosity $\mu_1$ and conductivity $\mu_2$ are computed from the linearised collision operator —
+        the fluid's transport coefficients come out of the microscopic collision law.
+      </p>
+    </div>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, button, readout, fitCanvas, cssVar, loop, gaussian, mulberry32 } = window.H6;
+  head({
+    title: 'The hydrodynamic limit',
+    maps: '[H6] §1.3.1, Theorem 2 (incompressible Navier–Stokes–Fourier)',
+    lecture: '14-navier-stokes-fourier.md',
+    prev: '13-algorithm-walkthrough.html', next: '15-hilbert-expansion.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1.25);
+  const cs = fitCanvas(document.getElementById('cs'), 1.25);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+
+  let delta = 0.4, Tfin = 1.0, Lexp = 3.0;
+  const rng = mulberry32(31);
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('δ  (α = δ⁻¹)', { min: 0.05, max: 1, step: 0.01, value: delta, fmt: v => v.toFixed(2) },
+    v => { delta = v; }).wrap);
+  ctl.append(slider('T_fin (fluid time)', { min: 0.2, max: 4, step: 0.1, value: Tfin, fmt: v => v.toFixed(1) },
+    v => { Tfin = v; }).wrap);
+  ctl.append(slider('log₁₀|log₁₀ ε|', { min: 0.3, max: 60, step: 0.1, value: Lexp, fmt: v => v.toFixed(1) },
+    v => { Lexp = v; }).wrap);
+  ctl.append(button('re-seed distribution', () => initGas()));
+
+  /* --- Monte-Carlo homogeneous gas, showing relaxation onto a Maxwellian --- */
+  let parts = [];
+  function initGas() {
+    parts = [];
+    for (let i = 0; i < 800; i++) {
+      const s = rng() < .5 ? 1 : -1;
+      parts.push([s * 0.85 + 0.1 * gaussian(rng), 0.1 * gaussian(rng)]);
+    }
+  }
+  initGas();
+
+  function collideStep(dt, alpha) {
+    const n = parts.length;
+    const trials = Math.max(1, Math.round(alpha * dt * n * 0.6));
+    for (let k = 0; k < trials; k++) {
+      const i = (rng() * n) | 0, j = (rng() * n) | 0;
+      if (i === j) continue;
+      const dvx = parts[i][0] - parts[j][0], dvy = parts[i][1] - parts[j][1];
+      if (rng() > Math.hypot(dvx, dvy) / 3) continue;
+      const a = rng() * 2 * Math.PI, ox = Math.cos(a), oy = Math.sin(a);
+      const dot = dvx * ox + dvy * oy;
+      if (dot >= 0) continue;
+      parts[i][0] -= dot * ox; parts[i][1] -= dot * oy;
+      parts[j][0] += dot * ox; parts[j][1] += dot * oy;
+    }
+  }
+
+  /** distance from Maxwellian: compare radial speed histogram to the Maxwellian with the same energy */
+  function maxwellianDefect() {
+    const B = 16, VM = 2.2, h = new Float64Array(B);
+    let e = 0;
+    for (const p of parts) {
+      const s = Math.hypot(p[0], p[1]);
+      e += s * s;
+      const b = Math.min(B - 1, Math.floor(s / VM * B));
+      h[b]++;
+    }
+    const T = e / (2 * parts.length);           // d = 2: <|v|^2> = 2T
+    let def = 0;
+    for (let b = 0; b < B; b++) {
+      const s = (b + .5) * VM / B, ds = VM / B;
+      // 2D Maxwellian speed density: (s/T) exp(-s^2/(2T))
+      const m = (s / T) * Math.exp(-s * s / (2 * T)) * ds;
+      def += Math.abs(h[b] / parts.length - m);
+    }
+    return { def, T };
+  }
+
+  function drawGas() {
+    const W = ctx.W, H = ctx.H, S = Math.min(W, H);
+    ctx.clearRect(0, 0, W, H);
+    ctx.save(); ctx.translate(W / 2, H * 0.42);
+    ctx.fillStyle = cssVar('--accent') + 'aa';
+    for (const p of parts) ctx.fillRect(p[0] * S * 0.17 - 1, -p[1] * S * 0.17 - 1, 2, 2);
+    const { T } = maxwellianDefect();
+    ctx.strokeStyle = cssVar('--good'); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(0, 0, Math.sqrt(2 * T) * S * 0.17, 0, 7); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = cssVar('--ink-dim'); ctx.font = '10px ui-monospace, monospace';
+    ctx.fillText('velocity distribution · green circle = Maxwellian scale √(2T)', 8, 14);
+    // manifold cartoon
+    const y0 = H * 0.80;
+    ctx.strokeStyle = cssVar('--good'); ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let k = 0; k <= 60; k++) {
+      const x = 30 + k / 60 * (W - 60);
+      const y = y0 + Math.sin(k / 60 * Math.PI * 2) * 12;
+      k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+    ctx.fillStyle = cssVar('--ink-dim'); ctx.font = '10px ui-monospace, monospace';
+    ctx.fillText('Maxwellian manifold (ρ, u, T)', 30, y0 + 34);
+    const { def } = maxwellianDefect();
+    const px = 30 + 0.5 * (W - 60), py = y0 + Math.sin(Math.PI) * 12 - def * 260;
+    ctx.strokeStyle = cssVar('--bad'); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(px, y0); ctx.lineTo(px, py); ctx.stroke();
+    ctx.fillStyle = cssVar('--bad');
+    ctx.beginPath(); ctx.arc(px, py, 5, 0, 7); ctx.fill();
+    ctx.fillText('n(t)', px + 8, py);
+  }
+
+  function drawScales() {
+    const W = cs.W, H = cs.H, pad = 44;
+    cs.clearRect(0, 0, W, H);
+    const dim = cssVar('--ink-dim'), good = cssVar('--good'), bad = cssVar('--bad'), acc = cssVar('--accent');
+    const need = Math.max(1, 1 / delta) * Math.max(1, Tfin / delta);
+    const lnAbs = Math.pow(10, Lexp) * Math.LN10;
+    const Lam = Math.sqrt(Math.log(lnAbs));
+    const MAX = Math.max(need, Lam) * 1.2;
+    const X = v => pad + (v / MAX) * (W - pad - 18);
+
+    const rows = [
+      ['mean free time  δ', 1, dim],
+      ['fluid time  T_fin', Tfin, acc],
+      ['kinetic time  δ⁻¹T_fin', Tfin / delta, acc],
+      ['needed  ≍ δ⁻²T_fin', need, bad],
+      ['available  Λ(ε)', Lam, good],
+    ];
+    cs.font = '11px ui-monospace, monospace';
+    rows.forEach((r, k) => {
+      const y = 34 + k * ((H - 60) / rows.length);
+      cs.fillStyle = dim; cs.textAlign = 'right';
+      cs.fillText(r[0], pad - 8, y + 4);
+      cs.textAlign = 'left';
+      cs.fillStyle = r[2];
+      cs.fillRect(pad, y - 6, Math.max(2, X(r[1]) - pad), 12);
+      cs.fillText(r[1].toFixed(2), Math.min(X(r[1]) + 6, W - 40), y + 4);
+    });
+    cs.fillStyle = Lam >= need ? good : bad; cs.textAlign = 'left';
+    cs.fillText(Lam >= need ? 'reachable at this ε' : 'not reachable at this ε', pad, H - 12);
+  }
+
+  loop(dt => {
+    collideStep(Math.min(dt, 0.033), 1 / delta);
+    drawGas(); drawScales();
+    const { def, T } = maxwellianDefect();
+    const need = Math.max(1, 1 / delta) * Math.max(1, Tfin / delta);
+    const lnAbs = Math.pow(10, Lexp) * Math.LN10;
+    const Lam = Math.sqrt(Math.log(lnAbs));
+    const reqL = Math.log10(Math.exp(need * need) / Math.LN10);
+    ro.set([
+      ['δ', delta.toFixed(2)],
+      ['α = δ⁻¹', (1 / delta).toFixed(1)],
+      ['temperature T', T.toFixed(3)],
+      ['distance to Maxwellian', def.toFixed(4), def < 0.1 ? 'hi' : 'lo'],
+      ['— scales —', ''],
+      ['fluid time T_fin', Tfin.toFixed(1)],
+      ['kinetic time δ⁻¹T_fin', (Tfin / delta).toFixed(1)],
+      ['needed ≍ δ⁻²T_fin', need.toFixed(2)],
+      ['available Λ(ε)', Lam.toFixed(3), Lam >= need ? 'hi' : 'lo'],
+      ['required ε', '10^−10^' + reqL.toFixed(1), 'lo'],
+      ['claimed accuracy', 'δ^{3/2} = ' + Math.pow(delta, 1.5).toExponential(2)],
+      ['fluctuation size δ', delta.toExponential(2)],
+      ['is error o(δ)?', Math.pow(delta, 1.5) < delta ? 'yes' : 'no', 'hi'],
+    ]);
+  });
+
+  foot('The gas panel is a Monte-Carlo realisation of the homogeneous collision operator, not a Navier–Stokes solver; the manifold picture is a cartoon. Note the last three rows: the error must be $o(\\delta)$ because the fluctuation being measured is itself $O(\\delta)$ — that is why Theorem 2 needs the exponent $3/2$ and not $1$.');
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Duhamel expansion and collision trees</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid two">
+    <div class="panel">
+      <h2>Backward space-time history</h2>
+      <canvas id="cv"></canvas>
+    </div>
+    <div class="panel">
+      <h2>The abstract diagram</h2>
+      <canvas id="ct"></canvas>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:1rem">
+    <div class="controls" id="ctl"></div>
+  </div>
+  <div class="grid two" style="margin-top:1rem">
+    <div class="panel"><h2>Lanford's barrier, as a number</h2><div id="ro"></div></div>
+    <div class="panel">
+      <h2>Why the series stops converging</h2>
+      <p style="font-size:.87rem">
+        Iterating Duhamel $n$ times produces $s(s+1)\cdots(s+n-1)\sim n!$ collision trees, each carrying
+        the time-simplex factor $t^{n}/n!$ and a power $\alpha^{n}$. The factorials cancel and what is
+        left is a <strong>geometric series in $C\alpha t$</strong> — convergent only for $\alpha t$ below an
+        absolute constant. Any longer time needs most terms to be much smaller than the crude bound, which
+        is a statement about their <em>cycle structure</em>: see
+        <a href="../lectures/09-molecules.md">Lecture 09</a>.
+      </p>
+    </div>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, toggle, button, readout, fitCanvas, cssVar, mulberry32, Molecule } = window.H6;
+  head({
+    title: 'Duhamel expansion and collision trees',
+    maps: '[LT] expansion machinery; classical background in Gallagher–Saint-Raymond–Texier',
+    lecture: '07-bbgky-and-collision-trees.md',
+    prev: '06-time-scales.html', next: '08-cumulant-layers.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1.05);
+  const ct = fitCanvas(document.getElementById('ct'), 1.05);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+
+  let s = 1, n = 4, alphaT = 0.6, allowRe = false, seed = 3;
+  let tree = null;
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('s (tagged particles)', { min: 1, max: 3, step: 1, value: s }, v => { s = v | 0; build(); }).wrap);
+  ctl.append(slider('n (expansion order)', { min: 1, max: 9, step: 1, value: n }, v => { n = v | 0; build(); }).wrap);
+  ctl.append(slider('α·t', { min: 0.1, max: 2.5, step: 0.05, value: alphaT, fmt: v => v.toFixed(2) },
+    v => { alphaT = v; paintRO(); }).wrap);
+  ctl.append(toggle('allow recollisions', false, v => { allowRe = v; build(); }).wrap);
+  ctl.append(button('new random history', () => { seed++; build(); }));
+
+  /** Build a random backward collision history: s roots, then n creation events. */
+  function build() {
+    const rng = mulberry32(seed * 977 + n * 31 + s + (allowRe ? 7 : 0));
+    const mol = new Molecule();
+    const lines = [];                       // particle lines: {x, y, vx, vy, atoms:[]}
+    for (let k = 0; k < s; k++) {
+      lines.push({ x: 0.2 + 0.6 * (k + .5) / s, y: 0.5, vx: (rng() - .5) * .6, vy: (rng() - .5) * .6, root: true });
+    }
+    const events = [];
+    let t = 1.0;
+    for (let k = 0; k < n; k++) {
+      t -= (0.85 / n) * (0.5 + rng());
+      const parent = (rng() * lines.length) | 0;
+      const a = mol.addAtom({ t, kind: 'C' });
+      // position of the creation: along the parent's backward trajectory
+      const p = lines[parent];
+      const px = (p.x + p.vx * (1 - t) + 1) % 1, py = (p.y + p.vy * (1 - t) + 1) % 1;
+      const child = { x: px, y: py, vx: (rng() - .5) * .8, vy: (rng() - .5) * .8, born: t };
+      lines.push(child);
+      events.push({ atom: a.id, t, parent, child: lines.length - 1, x: px, y: py, recollision: false });
+      mol.addBond(a.id, a.id === 0 ? a.id : Math.max(0, a.id - 1), {});   // placeholder, rebuilt below
+    }
+    // rebuild bonds properly: connect each atom to the previous atom on the same particle line
+    mol.bonds.length = 0;
+    const lastAtomOnLine = new Map();
+    events.forEach(ev => {
+      for (const li of [ev.parent, ev.child]) {
+        if (lastAtomOnLine.has(li)) mol.addBond(lastAtomOnLine.get(li), ev.atom, { line: li });
+        lastAtomOnLine.set(li, ev.atom);
+      }
+    });
+    // optionally close a cycle: a recollision between two lines that already share history
+    if (allowRe && events.length >= 3) {
+      const i = 1 + ((rng() * (events.length - 1)) | 0);
+      const j = ((rng() * i) | 0);
+      if (i !== j) { mol.addBond(events[i].atom, events[j].atom, { recollision: true }); events[i].recollision = true; }
+    }
+    tree = { mol, lines, events };
+    draw(); paintRO();
+  }
+
+  function draw() {
+    // ---- space-time panel ----
+    const W = ctx.W, H = ctx.H, pad = 26;
+    ctx.clearRect(0, 0, W, H);
+    const dim = cssVar('--ink-dim');
+    ctx.strokeStyle = cssVar('--line');
+    ctx.strokeRect(pad, pad, W - 2 * pad, H - 2 * pad);
+    const X = x => pad + x * (W - 2 * pad);
+    const Y = t => H - pad - t * (H - 2 * pad);   // t = 1 at the top (present), 0 at the bottom (initial data)
+
+    ctx.fillStyle = dim; ctx.font = '10px ui-monospace, monospace';
+    ctx.fillText('t (present)', pad + 4, pad - 8);
+    ctx.fillText('0 (initial data)', pad + 4, H - pad + 14);
+
+    // world lines
+    tree.lines.forEach((p, idx) => {
+      const t0 = p.born !== undefined ? p.born : 1;
+      ctx.strokeStyle = p.root ? cssVar('--accent') : cssVar('--ink-dim');
+      ctx.lineWidth = p.root ? 2 : 1;
+      ctx.beginPath();
+      for (let k = 0; k <= 24; k++) {
+        const tt = t0 * (1 - k / 24);
+        const xx = (p.x + p.vx * (t0 - tt) + 5) % 1;
+        k ? ctx.lineTo(X(xx), Y(tt)) : ctx.moveTo(X(xx), Y(tt));
+      }
+      ctx.stroke();
+    });
+    // creation events
+    tree.events.forEach(ev => {
+      ctx.fillStyle = ev.recollision ? cssVar('--bad') : cssVar('--good');
+      ctx.beginPath(); ctx.arc(X(ev.x), Y(ev.t), 4, 0, 7); ctx.fill();
+    });
+
+    // ---- diagram panel ----
+    const W2 = ct.W, H2 = ct.H, p2 = 30;
+    ct.clearRect(0, 0, W2, H2);
+    const mol = tree.mol;
+    const pos = tree.events.map((ev, k) => [
+      p2 + (k + .5) / tree.events.length * (W2 - 2 * p2),
+      H2 - p2 - ev.t * (H2 - 2 * p2),
+    ]);
+    ct.strokeStyle = cssVar('--line');
+    mol.bonds.forEach(b => {
+      ct.strokeStyle = b.recollision ? cssVar('--bad') : cssVar('--line');
+      ct.lineWidth = b.recollision ? 2 : 1;
+      ct.beginPath(); ct.moveTo(pos[b.i][0], pos[b.i][1]); ct.lineTo(pos[b.j][0], pos[b.j][1]); ct.stroke();
+    });
+    mol.atoms.forEach((a, k) => {
+      const d = mol.degree(a.id);
+      ct.fillStyle = d >= 4 ? cssVar('--bad') : d === 3 ? cssVar('--good') : cssVar('--accent');
+      ct.beginPath(); ct.arc(pos[k][0], pos[k][1], 7, 0, 7); ct.fill();
+      ct.fillStyle = cssVar('--bg'); ct.font = '9px ui-monospace, monospace'; ct.textAlign = 'center';
+      ct.fillText(String(d), pos[k][0], pos[k][1] + 3);
+    });
+    ct.textAlign = 'left';
+    ct.fillStyle = cssVar('--ink-dim'); ct.font = '10px ui-monospace, monospace';
+    ct.fillText('node label = degree · red edge = recollision', p2, H2 - 8);
+  }
+
+  function paintRO() {
+    // term count s(s+1)...(s+n-1) and the geometric factor
+    let terms = 1;
+    for (let k = 0; k < n; k++) terms *= (s + k);
+    const simplex = Math.pow(alphaT, n);
+    let fact = 1; for (let k = 2; k <= n; k++) fact *= k;
+    const crude = terms * simplex / fact;
+    const rho = tree.mol.circuitRank();
+    ro.set([
+      ['s', s], ['n', n],
+      ['trees  s(s+1)···(s+n−1)', terms.toLocaleString()],
+      ['time factor (αt)ⁿ/n!', (simplex / fact).toExponential(2)],
+      ['crude term bound', crude.toExponential(2), crude < 1 ? 'hi' : 'lo'],
+      ['α·t', alphaT.toFixed(2), alphaT < 1 ? 'hi' : 'lo'],
+      ['series', alphaT < 1 ? 'converges' : 'DIVERGES', alphaT < 1 ? 'hi' : 'lo'],
+      ['— diagram —', ''],
+      ['atoms V', tree.mol.atoms.length],
+      ['bonds E', tree.mol.bonds.length],
+      ['circuit rank ρ', rho, rho ? 'lo' : 'hi'],
+      ['is a tree?', rho === 0 ? 'yes → Boltzmann' : 'no → error term', rho === 0 ? 'hi' : 'lo'],
+    ]);
+  }
+
+  build();
+  window.addEventListener('resize', () => { draw(); });
+  foot('The history is a schematic random draw, not a hard-sphere simulation: it illustrates the combinatorial skeleton of a Duhamel term. Recollision-free diagrams are trees and reassemble the Boltzmann equation; every extra cycle is one recollision and must be paid for with $\\varepsilon$-smallness.');
+});
+</script>
+</body>
+</html>

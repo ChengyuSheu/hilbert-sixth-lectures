@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The cumulant layer induction</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="panel">
+    <h2>Propagating $\lVert E_H(\ell\tau)\rVert_{L^1}\le\varepsilon^{\alpha_*\lvert H\rvert}$ across layers</h2>
+    <canvas id="cv"></canvas>
+    <div class="controls" id="ctl"></div>
+  </div>
+  <div class="grid two" style="margin-top:1rem">
+    <div class="panel"><h2>Induction state</h2><div id="ro"></div></div>
+    <div class="panel">
+      <h2>Two ideas, one picture</h2>
+      <p style="font-size:.87rem">
+        <strong>Propagate structure, not size.</strong> A norm bound loses a factor $C&gt;1$ per layer and dies
+        after $O(1)$ layers — Lanford again. The cumulant bound spends that loss on the <em>exponent</em>,
+        which has $\lvert\log\varepsilon\rvert$ of room; the constraint becomes
+        $C^{L}\lesssim\lvert\log\varepsilon\rvert$, i.e. $L\lesssim\log\lvert\log\varepsilon\rvert$.
+      </p>
+      <p style="font-size:.87rem">
+        <strong>Partial time expansion.</strong> Expand only the cumulants — they come multiplied by a small
+        factor — and leave the $O(1)$ main density $f_A$ frozen at the layer's start. Toggle "expand $f_A$
+        too" and watch the term counter detonate.
+      </p>
+    </div>
+  </div>
+  <div class="note">
+    <strong>Caricature warning.</strong> The per-layer degradation law $\alpha_*\mapsto\alpha_*/C$ is invented
+    for exposition. The real loss in [LT] is inseparable from the combinatorial estimates. What is faithful
+    here is the <em>shape</em> of the conclusion. See <a href="../lectures/08-cumulants-and-ansatz.md">Lecture 08</a> §7.
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, toggle, button, readout, fitCanvas, cssVar } = window.H6;
+  head({
+    title: 'The cumulant layer induction',
+    maps: '[LT] §2, the long-time cumulant ansatz and partial time expansion',
+    lecture: '08-cumulants-and-ansatz.md',
+    prev: '07-collision-tree.html', next: '09-molecule-explorer.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 2.6);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+
+  let Lexp = 1.0;        // log10 |log10 eps|
+  let C = 2.0, Hsize = 2, ell = 0, naive = false, expandFA = false;
+  const MAXL = 24;
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('log₁₀|log₁₀ ε|', { min: 0.3, max: 60, step: 0.1, value: Lexp, fmt: v => v.toFixed(1) },
+    v => { Lexp = v; draw(); }).wrap);
+  ctl.append(slider('C (loss per layer)', { min: 1.2, max: 4, step: 0.1, value: C, fmt: v => v.toFixed(1) },
+    v => { C = v; draw(); }).wrap);
+  ctl.append(slider('|H|', { min: 1, max: 5, step: 1, value: Hsize }, v => { Hsize = v | 0; draw(); }).wrap);
+  ctl.append(button('step a layer', () => { ell = Math.min(MAXL, ell + 1); draw(); }));
+  ctl.append(button('reset', () => { ell = 0; draw(); }));
+  ctl.append(toggle('naive norm propagation', false, v => { naive = v; draw(); }).wrap);
+  ctl.append(toggle('expand f_A too', false, v => { expandFA = v; draw(); }).wrap);
+
+  const absLog = () => Math.pow(10, Lexp) * Math.LN10;   // |log eps| in nats
+
+  /** exponent of eps carried at layer k */
+  function expo(k) { return Math.pow(C, -k); }
+  /** the bound itself: eps^{expo * |H|} = exp(-expo*|H|*|log eps|) */
+  function boundAt(k) {
+    if (naive) return Math.pow(C, k) * 1e-3;             // norm scheme: grows by C each layer
+    return Math.exp(-expo(k) * Hsize * absLog());
+  }
+
+  function draw() {
+    const W = ctx.W, H = ctx.H;
+    ctx.clearRect(0, 0, W, H);
+    const dim = cssVar('--ink-dim'), good = cssVar('--good'), bad = cssVar('--bad'),
+          acc = cssVar('--accent'), line = cssVar('--line');
+
+    const pad = 40, top = 46, barH = H - top - 46;
+    const wCell = (W - 2 * pad) / MAXL;
+
+    let alive = 0;
+    for (let k = 0; k <= MAXL; k++) {
+      const b = boundAt(k);
+      const ok = b < 0.5;
+      if (ok) alive = k;
+      const x = pad + k * wCell;
+      // height encodes how much smallness is left: -log10(bound), capped
+      const strength = Math.max(0, Math.min(1, -Math.log10(Math.max(b, 1e-30)) / 30));
+      ctx.fillStyle = (ok ? good : bad) + (k <= ell ? 'cc' : '44');
+      ctx.fillRect(x + 1, top + barH * (1 - strength), wCell - 2, barH * strength);
+      if (k === ell) {
+        ctx.strokeStyle = acc; ctx.lineWidth = 2;
+        ctx.strokeRect(x + 1, top, wCell - 2, barH);
+      }
+      if (k % 2 === 0) {
+        ctx.fillStyle = dim; ctx.font = '9px ui-monospace, monospace'; ctx.textAlign = 'center';
+        ctx.fillText(String(k), x + wCell / 2, top + barH + 14);
+      }
+    }
+    ctx.strokeStyle = line; ctx.strokeRect(pad, top, W - 2 * pad, barH);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = dim; ctx.font = '11px ui-monospace, monospace';
+    ctx.fillText('layer ℓ  (each of width τ) →', pad, H - 14);
+    ctx.fillText('bar height = smallness remaining', pad, top - 26);
+    ctx.fillStyle = naive ? bad : good;
+    ctx.fillText(naive ? 'scheme: propagate a norm (Lanford)' : 'scheme: propagate the cumulant ansatz ([LT])', pad, top - 10);
+
+    // term counter
+    let terms = Math.pow(6, ell);
+    if (expandFA) terms = Math.pow(6, ell) * factorial(Math.min(12, ell + 4));
+    const b = boundAt(ell);
+
+    ro.set([
+      ['ε', '10^−10^' + Lexp.toFixed(1)],
+      ['|log ε|', absLog().toExponential(2)],
+      ['|H|', Hsize],
+      ['current layer ℓ', ell],
+      ['exponent α_* at ℓ', naive ? '—' : expo(ell).toExponential(2)],
+      ['bound ε^{α_*|H|}', b < 1e-6 ? b.toExponential(2) : b.toFixed(6), b < 0.5 ? 'hi' : 'lo'],
+      ['still informative?', b < 0.5 ? 'yes' : 'NO — induction dead', b < 0.5 ? 'hi' : 'lo'],
+      ['layers survivable', alive, 'hi'],
+      ['log|log ε|', Math.log(absLog()).toFixed(2)],
+      ['— expansion —', ''],
+      ['f_A expanded?', expandFA ? 'yes' : 'no (partial)'],
+      ['terms after ℓ layers', terms > 1e12 ? terms.toExponential(2) : Math.round(terms).toLocaleString(),
+        expandFA ? 'lo' : 'hi'],
+    ]);
+  }
+  function factorial(k) { let f = 1; for (let i = 2; i <= k; i++) f *= i; return f; }
+
+  draw();
+  window.addEventListener('resize', draw);
+  foot('Compare "layers survivable" against log|log ε| as you drag ε: the induction depth tracks the double logarithm, which is exactly where $(\\log|\\log\\varepsilon|)^{1/2}$ in Theorem 1 comes from. Switch on the naive scheme and the depth stops responding to ε at all.');
+});
+</script>
+</body>
+</html>

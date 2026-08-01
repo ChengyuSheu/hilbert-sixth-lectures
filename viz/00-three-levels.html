@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The three-level program</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid side">
+    <div class="panel">
+      <h2>Newton &rarr; Boltzmann &rarr; Fluid</h2>
+      <canvas id="cv"></canvas>
+      <div class="controls" id="ctl"></div>
+    </div>
+    <div class="panel">
+      <h2>Readout</h2>
+      <div id="ro"></div>
+      <div class="note" id="verdict"></div>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:1rem">
+    <h2>What the picture says</h2>
+    <p style="font-size:.9rem">
+      Arrow 1 is valid for $\alpha A t_{\mathrm{fin}}$ below the bound shown. Arrow 2 needs the
+      Boltzmann description to survive $\alpha t\to\infty$ &mdash; hydrodynamics <em>is</em> the regime of
+      many collisions per particle. Under Lanford's theorem the first bound is an absolute constant,
+      so the two requirements never meet. Deng&ndash;Hani&ndash;Ma replace the constant by
+      $(\log|\log\varepsilon|)^{1/2}$, which diverges, and the gap closes.
+    </p>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, toggle, readout, fitCanvas, cssVar, el } = window.H6;
+  head({
+    title: 'The three-level program',
+    maps: '[H6] §1.1 and Figure 1',
+    lecture: '00-hilberts-sixth-problem.md',
+    next: '01-hard-spheres-torus.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 2.1);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+  const verdict = document.getElementById('verdict');
+
+  // state: logloge = log10(|log10 eps|), so the slider spans absurd ranges legibly
+  let L = 1.0;          // |log10 eps| = 10^L
+  let modern = true;    // post-[H6] vs classical
+  let target = 5;       // required mean free times for the fluid limit
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('log₁₀|log₁₀ ε|', { min: 0.3, max: 100, step: 0.1, value: L,
+    fmt: v => v.toFixed(1) }, v => { L = v; draw(); }).wrap);
+  ctl.append(slider('mean free times needed by arrow 2', { min: 1, max: 30, step: 1, value: target },
+    v => { target = v; draw(); }).wrap);
+  ctl.append(toggle('post-[H6] bound (off = Lanford)', true, v => { modern = v; draw(); }).wrap);
+
+  const LANFORD = 0.4;  // a fraction of one mean free time; illustrative constant
+
+  function bound() {
+    if (!modern) return LANFORD;
+    // |log eps| in natural units = 10^L * ln(10)
+    const lnAbs = Math.pow(10, L) * Math.LN10;
+    return Math.sqrt(Math.log(lnAbs));
+  }
+
+  function draw() {
+    const W = ctx.W, H = ctx.H;
+    ctx.clearRect(0, 0, W, H);
+    const ink = cssVar('--ink'), dim = cssVar('--ink-dim'), acc = cssVar('--accent');
+    const good = cssVar('--good'), bad = cssVar('--bad'), line = cssVar('--line');
+
+    // --- three boxes ---
+    const boxes = [
+      { x: .07, label: 'Newton', sub: 'N hard spheres, diameter ε' },
+      { x: .40, label: 'Boltzmann', sub: 'n(t,x,v), collision rate α' },
+      { x: .73, label: 'Euler / NSF', sub: '(ρ, u, T)(t,x)' },
+    ];
+    ctx.textAlign = 'center';
+    boxes.forEach(b => {
+      const bx = b.x * W, by = H * .12, bw = W * .20, bh = H * .22;
+      ctx.fillStyle = cssVar('--panel-2');
+      ctx.strokeStyle = line; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 8); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = ink; ctx.font = '600 15px system-ui';
+      ctx.fillText(b.label, bx + bw / 2, by + bh * .42);
+      ctx.fillStyle = dim; ctx.font = '11px ui-monospace, monospace';
+      ctx.fillText(b.sub, bx + bw / 2, by + bh * .72);
+    });
+
+    // --- arrows ---
+    const arrowY = H * .23;
+    const drawArrow = (x0, x1, label, ok) => {
+      ctx.strokeStyle = ok ? good : bad; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x0, arrowY); ctx.lineTo(x1, arrowY); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x1, arrowY); ctx.lineTo(x1 - 7, arrowY - 4);
+      ctx.lineTo(x1 - 7, arrowY + 4); ctx.closePath(); ctx.fillStyle = ok ? good : bad; ctx.fill();
+      ctx.fillStyle = dim; ctx.font = '10px ui-monospace, monospace';
+      ctx.fillText(label, (x0 + x1) / 2, arrowY - 9);
+    };
+    const B = bound();
+    drawArrow(W * .275, W * .395, 'ε→0, Nε^(d−1)=α', true);
+    drawArrow(W * .605, W * .725, 'α→∞', B >= target);
+
+    // --- the time-scale bar ---
+    const barY = H * .60, barX = W * .07, barW = W * .86, barH = 16;
+    ctx.fillStyle = cssVar('--panel-2');
+    ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, 4); ctx.fill();
+    ctx.strokeStyle = line; ctx.stroke();
+
+    const SCALE = 32; // mean free times spanning the bar
+    const px = t => barX + Math.min(1, t / SCALE) * barW;
+
+    // valid region
+    ctx.fillStyle = good + '55';
+    ctx.beginPath(); ctx.roundRect(barX, barY, px(B) - barX, barH, 4); ctx.fill();
+    // gap to target
+    if (B < target) {
+      ctx.fillStyle = bad + '44';
+      ctx.fillRect(px(B), barY, px(target) - px(B), barH);
+    }
+    // target marker
+    ctx.strokeStyle = acc; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(px(target), barY - 8); ctx.lineTo(px(target), barY + barH + 8); ctx.stroke();
+
+    ctx.fillStyle = dim; ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('0', barX, barY + barH + 22);
+    ctx.fillText('α·t  (mean free times per particle)  →', barX, barY - 12);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = good;
+    ctx.fillText('arrow 1 valid: ' + B.toFixed(2), Math.min(px(B), barX + barW - 60), barY + barH + 22);
+    ctx.fillStyle = acc;
+    ctx.fillText('arrow 2 needs ' + target, px(target), barY + barH + 40);
+
+    // --- readouts ---
+    const absLog10 = Math.pow(10, L);
+    const epsStr = L < 2 ? ('1e-' + absLog10.toFixed(0))
+                         : ('10^-10^' + L.toFixed(1));
+    ro.set([
+      ['ε', epsStr],
+      ['|log₁₀ ε|', absLog10.toExponential(2)],
+      ['regime', modern ? '[H6] Theorem 1' : 'Lanford 1975'],
+      ['bound on α·A·t_fin', B.toFixed(3), B >= target ? 'hi' : 'lo'],
+      ['needed by arrow 2', target.toFixed(0)],
+      ['gap', (target - B).toFixed(3), B >= target ? 'hi' : 'lo'],
+    ]);
+
+    verdict.innerHTML = B >= target
+      ? '<strong>Composable.</strong> The Boltzmann description survives long enough for the hydrodynamic limit to be taken. This is only ever true because the bound diverges as ε→0 — drag ε back up and watch it fail.'
+      : (modern
+        ? '<strong>Not yet.</strong> Push ε further down: the bound grows like (log|log ε|)^{1/2}, so it <em>will</em> eventually clear any fixed target — that is exactly what Theorems 2 and 3 use. Note how far you have to drag.'
+        : '<strong>Never.</strong> Lanford\'s bound is an absolute constant; it does not move when you drag ε. No amount of ε→0 closes this gap, which is why the composition was blocked for fifty years.');
+  }
+
+  draw();
+  window.addEventListener('resize', draw);
+  foot('Illustrative constants: Lanford\'s horizon is drawn as 0.4 mean free times. The point is which bars move when you drag ε, not their exact lengths. See <a href="../lectures/06-time-scales.md">Lecture 06</a>.');
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hard spheres on the torus</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid side">
+    <div class="panel">
+      <h2>Hard sphere dynamics on $\mathbb{T}^2$</h2>
+      <canvas id="cv"></canvas>
+      <div class="controls" id="ctl"></div>
+    </div>
+    <div>
+      <div class="panel">
+        <h2>State</h2>
+        <div id="ro"></div>
+      </div>
+      <div class="panel" style="margin-top:1rem">
+        <h2>Last collision (Figure 2)</h2>
+        <canvas id="cv2"></canvas>
+        <div id="ev" style="font-family:var(--mono);font-size:.75rem;color:var(--ink-dim);margin-top:.5rem"></div>
+      </div>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:1rem">
+    <h2>The law being applied</h2>
+    <p style="font-size:.9rem">
+      $\omega=(x_i-x_j)/\varepsilon\in\mathbb{S}^{d-1}$, and at contact
+      $v_i(t^+)=v_i(t^-)-((v_i-v_j)\cdot\omega)\,\omega$, $\;v_j(t^+)=v_j(t^-)+((v_i-v_j)\cdot\omega)\,\omega$.
+      The normal components are exchanged; the tangential components are untouched. Contacts are located
+      by solving the contact quadratic exactly, so the law is applied at the true contact time.
+    </p>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, button, toggle, readout, fitCanvas, cssVar, loop, HardSpheres } = window.H6;
+  head({
+    title: 'Hard spheres on the torus',
+    maps: '[H6] §1.2.1, Definition 1.1, Figure 2',
+    lecture: '01-hard-sphere-dynamics.md',
+    prev: '00-three-levels.html', next: '02-boltzmann-grad.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1);
+  const ctx2 = fitCanvas(document.getElementById('cv2'), 1.15);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+  const evLine = document.getElementById('ev');
+
+  let N = 60, eps = 0.035, running = true, tagged = 0, showTag = true;
+  let sim = new HardSpheres(N, eps, 20250303);
+  let frozen = null;   // last collision, kept for the inspector
+  sim.onCollision = e => { frozen = e; };
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('N', { min: 5, max: 220, step: 1, value: N }, v => { N = v | 0; rebuild(); }).wrap);
+  ctl.append(slider('ε', { min: 0.008, max: 0.09, step: 0.001, value: eps, fmt: v => v.toFixed(3) },
+    v => { eps = v; rebuild(); }).wrap);
+  ctl.append(button('pause / run', () => { running = !running; }));
+  ctl.append(button('reverse time', () => { sim.reverse(); }));
+  ctl.append(button('reset', rebuild));
+  ctl.append(toggle('tag a particle', true, v => { showTag = v; }).wrap);
+
+  function rebuild() {
+    sim = new HardSpheres(N, eps, 20250303);
+    sim.onCollision = e => { frozen = e; };
+    frozen = null;
+    tagged = 0;
+  }
+
+  // ---- main torus panel ----
+  function trace(c, S) {
+    if (!showTag) return;
+    const px = sim.x[tagged] * S, py = sim.y[tagged] * S;
+    c.strokeStyle = cssVar('--gold'); c.lineWidth = 1.5;
+    c.beginPath(); c.arc(px, py, Math.max(5, (eps / 2) * S + 5), 0, 7); c.stroke();
+  }
+
+  // ---- collision inspector: the paper's Figure 2 ----
+  function drawEvent() {
+    const W = ctx2.W, H = ctx2.H;
+    ctx2.clearRect(0, 0, W, H);
+    if (!frozen) {
+      ctx2.fillStyle = cssVar('--ink-dim'); ctx2.font = '12px system-ui'; ctx2.textAlign = 'center';
+      ctx2.fillText('waiting for a collision…', W / 2, H / 2);
+      evLine.textContent = '';
+      return;
+    }
+    const e = frozen;
+    const cx = W / 2, cy = H / 2, R = Math.min(W, H) * 0.16;
+    const ox = e.ox, oy = e.oy;
+
+    // the two spheres at contact
+    ctx2.fillStyle = cssVar('--accent') + '55';
+    ctx2.strokeStyle = cssVar('--accent');
+    [[+1, 'i'], [-1, 'j']].forEach(([s, name]) => {
+      const px = cx + s * ox * R, py = cy + s * oy * R;
+      ctx2.beginPath(); ctx2.arc(px, py, R, 0, 7); ctx2.fill(); ctx2.stroke();
+      ctx2.fillStyle = cssVar('--ink'); ctx2.font = '600 12px system-ui'; ctx2.textAlign = 'center';
+      ctx2.fillText(name, px, py + 4);
+      ctx2.fillStyle = cssVar('--accent') + '55';
+    });
+
+    // tangent plane at contact
+    ctx2.strokeStyle = cssVar('--line'); ctx2.setLineDash([4, 4]);
+    ctx2.beginPath();
+    ctx2.moveTo(cx - oy * R * 2.2, cy + ox * R * 2.2);
+    ctx2.lineTo(cx + oy * R * 2.2, cy - ox * R * 2.2);
+    ctx2.stroke(); ctx2.setLineDash([]);
+
+    const arrow = (x0, y0, dx, dy, col, label) => {
+      const K = R * 1.9;
+      const x1 = x0 + dx * K, y1 = y0 + dy * K;
+      ctx2.strokeStyle = col; ctx2.fillStyle = col; ctx2.lineWidth = 2;
+      ctx2.beginPath(); ctx2.moveTo(x0, y0); ctx2.lineTo(x1, y1); ctx2.stroke();
+      const a = Math.atan2(y1 - y0, x1 - x0);
+      ctx2.beginPath(); ctx2.moveTo(x1, y1);
+      ctx2.lineTo(x1 - 7 * Math.cos(a - .4), y1 - 7 * Math.sin(a - .4));
+      ctx2.lineTo(x1 - 7 * Math.cos(a + .4), y1 - 7 * Math.sin(a + .4));
+      ctx2.closePath(); ctx2.fill();
+      ctx2.font = '10px ui-monospace, monospace'; ctx2.textAlign = 'center';
+      ctx2.fillText(label, x1 + dx * 12, y1 + dy * 12);
+    };
+
+    const pi = [cx + ox * R, cy + oy * R], pj = [cx - ox * R, cy - oy * R];
+    arrow(pi[0], pi[1], e.viIn[0], e.viIn[1], cssVar('--ink-dim'), 'vᵢ(t⁻)');
+    arrow(pj[0], pj[1], e.vjIn[0], e.vjIn[1], cssVar('--ink-dim'), 'vⱼ(t⁻)');
+    arrow(pi[0], pi[1], e.viOut[0], e.viOut[1], cssVar('--good'), 'vᵢ(t⁺)');
+    arrow(pj[0], pj[1], e.vjOut[0], e.vjOut[1], cssVar('--good'), 'vⱼ(t⁺)');
+    arrow(cx, cy, ox, oy, cssVar('--gold'), 'εω');
+
+    const pIn = [e.viIn[0] + e.vjIn[0], e.viIn[1] + e.vjIn[1]];
+    const pOut = [e.viOut[0] + e.vjOut[0], e.viOut[1] + e.vjOut[1]];
+    const eIn = e.viIn[0] ** 2 + e.viIn[1] ** 2 + e.vjIn[0] ** 2 + e.vjIn[1] ** 2;
+    const eOut = e.viOut[0] ** 2 + e.viOut[1] ** 2 + e.vjOut[0] ** 2 + e.vjOut[1] ** 2;
+    evLine.innerHTML =
+      `pair (${e.i},${e.j})${e.repeat ? ' <span class="tag bad">RECOLLISION</span>' : ''}<br>` +
+      `Σv before (${pIn[0].toFixed(4)}, ${pIn[1].toFixed(4)})<br>` +
+      `Σv after&nbsp; (${pOut[0].toFixed(4)}, ${pOut[1].toFixed(4)})<br>` +
+      `Σ|v|² before ${eIn.toFixed(6)} · after ${eOut.toFixed(6)}`;
+  }
+
+  loop(dt => {
+    if (running) sim.step(dt * 0.6);
+    sim.draw(ctx, { trace, highlight: showTag ? tagged : null });
+    drawEvent();
+    ro.set([
+      ['N', sim.n],
+      ['ε', sim.eps.toFixed(4)],
+      ['α = Nε^(d−1), d=2', sim.alpha().toFixed(3)],
+      ['volume fraction', sim.volumeFraction().toExponential(2)],
+      ['simulated time', sim.t.toFixed(2)],
+      ['collisions', sim.collisions],
+      ['recollisions', sim.recollisions, sim.recollisions ? 'lo' : 'hi'],
+      ['collisions / particle', (sim.collisions / sim.n).toFixed(2)],
+      ['kinetic energy', sim.kineticEnergy().toFixed(6), 'hi'],
+    ]);
+  });
+
+  document.getElementById('cv').addEventListener('click', ev => {
+    const r = ev.target.getBoundingClientRect();
+    const S = Math.min(r.width, r.height);
+    const mx = (ev.clientX - r.left - (r.width - S) / 2) / S;
+    const my = (ev.clientY - r.top - (r.height - S) / 2) / S;
+    let best = 0, bd = 1e9;
+    for (let i = 0; i < sim.n; i++) {
+      const d = (sim.x[i] - mx) ** 2 + (sim.y[i] - my) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    tagged = best;
+  });
+
+  foot('Energy is conserved to floating-point accuracy — watch the readout. Reversing time retraces the history until accumulated round-off breaks it, which is a property of the simulation, not of the dynamics. Recollisions are the enemy of the whole proof: see <a href="../lectures/09-molecules.md">Lecture 09</a>.');
+});
+</script>
+</body>
+</html>

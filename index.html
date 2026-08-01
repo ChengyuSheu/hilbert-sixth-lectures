@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hilbert's Sixth Problem — Lectures &amp; Visualizations</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .hero { max-width: 1180px; margin: 0 auto; padding: 2.5rem 1.5rem 1rem; }
+  .hero h1 { font-size: 2rem; margin: 0 0 .5rem; letter-spacing: -.02em; }
+  .hero .cite { color: var(--ink-dim); font-size: .92rem; max-width: 62ch; }
+  .hero .cite a { color: var(--accent); }
+  .cards { display: grid; gap: .85rem; grid-template-columns: repeat(auto-fill, minmax(285px, 1fr)); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: .9rem 1rem; text-decoration: none; color: inherit; display: block;
+    transition: border-color .12s, transform .12s;
+  }
+  .card:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .card .num { font-family: var(--mono); font-size: .72rem; color: var(--accent); }
+  .card h3 { margin: .2rem 0 .35rem; font-size: 1rem; }
+  .card p { margin: 0; font-size: .8rem; color: var(--ink-dim); line-height: 1.45; }
+  .card .src { font-family: var(--mono); font-size: .68rem; color: var(--ink-dim); margin-top: .5rem; opacity: .8; }
+  .card .lec { font-size: .74rem; color: var(--accent); margin-top: .4rem; display: inline-block; }
+  section { max-width: 1180px; margin: 0 auto; padding: 1rem 1.5rem 2rem; }
+  section > h2 { font-size: .82rem; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-dim); margin: 1.5rem 0 .8rem; }
+  .paths { display: grid; gap: .8rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .path { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: .8rem .9rem; font-size: .82rem; }
+  .path b { display: block; margin-bottom: .3rem; }
+  .path code { font-family: var(--mono); font-size: .76rem; color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="hero">
+  <h1>Hilbert's Sixth Problem</h1>
+  <p class="cite">
+    An unofficial teaching companion to Deng, Hani &amp; Ma,
+    <a href="https://arxiv.org/abs/2503.01800"><em>Hilbert's sixth problem: derivation of fluid equations
+    via Boltzmann's kinetic theory</em></a> (arXiv:2503.01800; accepted, <em>Annals of Mathematics</em>, Nov 2025),
+    and its companion <a href="https://arxiv.org/abs/2408.07818">arXiv:2408.07818</a>.
+    The methodology is taken apart into one lecture and one visualization per idea, each traced to the exact
+    section it expounds — see <a href="MAPPING.md">MAPPING.md</a>.
+  </p>
+</div>
+
+<section>
+  <h2>Suggested paths</h2>
+  <div class="paths">
+    <div class="path"><b>I have one hour</b><code>00 → 01 → 04 → 06 → 14</code><br>What was proved, and why the time scale is the whole game.</div>
+    <div class="path"><b>The proof architecture</b><code>05 → 07 → 08 → 09 → 10 → 11 → 13</code><br>The actual chain of reduction, cumulants to cutting.</div>
+    <div class="path"><b>The fluid end</b><code>00 → 06 → 14 → 15 → 16</code><br>Hydrodynamic limits and what they do not claim.</div>
+    <div class="path"><b>Refereeing the physics</b><code>02 → 06 → 16</code><br>Dilute gas, growth rates, and the published critique.</div>
+  </div>
+
+  <h2>Visualizations</h2>
+  <div class="cards" id="cards"></div>
+
+  <h2>Reference</h2>
+  <div class="cards">
+    <a class="card" href="MAPPING.md"><h3>MAPPING.md</h3><p>Every lecture and visualization traced to its exact section, definition, theorem or proposition — with a fidelity code saying whether it is quoted, paraphrased, or simplified.</p></a>
+    <a class="card" href="GLOSSARY.md"><h3>GLOSSARY.md</h3><p>Notation across all three layers, plus the genuine symbol clashes in the source material and how they are disambiguated.</p></a>
+    <a class="card" href="SOURCES.md"><h3>SOURCES.md</h3><p>Full bibliography: the two primary papers, the survey exposition, the classical chain, and the published critique.</p></a>
+    <a class="card" href="README.md"><h3>README.md</h3><p>Overview, conventions, and an honest statement of what this repository is and is not.</p></a>
+  </div>
+</section>
+
+<script>
+const VIZ = [
+  ['00', 'Three levels', '00-three-levels.html', '00-hilberts-sixth-problem.md',
+   'Newton → Boltzmann → fluid, with the gap that blocked the composition for fifty years. Drag ε and watch which bars move.', '§1.1, Figure 1'],
+  ['01', 'Hard spheres on the torus', '01-hard-spheres-torus.html', '01-hard-sphere-dynamics.md',
+   'The exact dynamics, with contacts resolved at their true times. Inspect a collision, reverse time, tag a particle.', '§1.2.1, Def. 1.1, Fig. 2'],
+  ['02', 'The Boltzmann–Grad dial', '02-boltzmann-grad.html', '02-boltzmann-grad-scaling.md',
+   'One slider, three scalings. Only the middle one has a Boltzmann limit — and it forces a vanishing volume fraction.', '§1.2.2'],
+  ['03', 'Ensemble and marginals', '03-ensemble-marginals.html', '03-grand-canonical-ensemble.md',
+   'Samples from the grand canonical ensemble, and the excluded-volume hole in the pair correlation.', '§1.2.2, Def. 1.3'],
+  ['04', 'The collision operator', '04-collision-operator.html', '04-boltzmann-equation.md',
+   'Drag v and v₁ to see the collision sphere; watch a gas relax to Maxwellian while H(t) falls.', '§1.2.3, Def. 1.4'],
+  ['05', 'Chaos and cumulants', '05-chaos-cumulants.html', '05-chaos-and-theorem-1.md',
+   'Correlation genealogy versus marginal factorization error — why chaos is an L¹ statement, never a pathwise one.', '§1.2.4, Theorem 1'],
+  ['06', 'The time-scale ladder', '06-time-scales.html', '06-time-scales.md',
+   'Lanford’s constant against (log|log ε|)^½. Find the ε at which a fluid limit becomes reachable, and read the exponent.', 'Thm. 1 & Thm. 2 hypotheses'],
+  ['07', 'Duhamel and collision trees', '07-collision-tree.html', '07-bbgky-and-collision-trees.md',
+   'The factorial term count against the time factor, and the moment a diagram stops being a tree.', '[LT] expansion machinery'],
+  ['08', 'The cumulant layer induction', '08-cumulant-layers.html', '08-cumulants-and-ansatz.md',
+   'Propagate structure, not size. Watch the survivable layer count track log|log ε| as you drag ε.', '[LT] §2'],
+  ['09', 'Molecule explorer', '09-molecule-explorer.html', '09-molecules.md',
+   'Build a collision history, get its molecule. Recollisions increment the circuit rank in front of you.', '§2.1'],
+  ['10', 'Cutting sandbox', '10-cutting-sandbox.html', '10-cutting-operations.md',
+   'Cut by hand and watch degrees change as a consequence of your choices. One gallery entry cannot be beaten.', '§2.2, §3.1, Props. 3.2–3.4'],
+  ['11', 'The excess ledger', '11-excess-ledger.html', '11-excess-and-proposition-3-8.md',
+   'Achieved excess against circuit rank. Switch the long-bond gain off and a red band appears below the line.', '§3.2 Def. 3.6, §3.3 Prop. 3.8'],
+  ['12', 'Torus recollisions', '12-torus-recollisions.html', '12-torus-and-long-bonds.md',
+   'Plane versus torus, side by side — plus the velocity-set explorer that renders property (♣).', '§1.4.1'],
+  ['13', 'The new algorithm', '13-algorithm-walkthrough.html', '13-the-new-algorithm.md',
+   'Step the loop, watch the deferred-obligation stack fill and drain, and see why immediate payment fails.', '§1.4.2, §4'],
+  ['14', 'The hydrodynamic limit', '14-hydrodynamic-limit.html', '14-navier-stokes-fourier.md',
+   'Relaxation onto the Maxwellian manifold, and the doubly-exponential price of the iterated limit.', '§1.3.1, Theorem 2'],
+  ['15', 'The Hilbert expansion', '15-hilbert-expansion.html', '15-compressible-euler.md',
+   'Order-by-order residuals, γ = (d+2)/d, and the shock at which the whole construction dies.', '§1.3.2, Theorem 3'],
+];
+document.getElementById('cards').innerHTML = VIZ.map(v => `
+  <a class="card" href="viz/${v[2]}">
+    <div class="num">${v[0]}</div>
+    <h3>${v[1]}</h3>
+    <p>${v[4]}</p>
+    <div class="src">${v[5]}</div>
+    <span class="lec">lecture: ${v[3]}</span>
+  </a>`).join('');
+</script>
+
+<footer class="viz-foot" style="max-width:1180px;margin:0 auto">
+  Exposition only — the papers are authoritative. Prose CC BY 4.0, code MIT.
+  Lecture 16 (<a href="lectures/16-scope-and-critique.md">scope and critique</a>) has no visualization: it is argument, not mechanism.
+</footer>
+</body>
+</html>

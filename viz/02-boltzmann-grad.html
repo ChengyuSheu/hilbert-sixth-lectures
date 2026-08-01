@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Boltzmann–Grad dial</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid side">
+    <div class="panel">
+      <h2>One dial, three scalings</h2>
+      <canvas id="cv"></canvas>
+      <div class="controls" id="ctl"></div>
+    </div>
+    <div>
+      <div class="panel"><h2>Invariants</h2><div id="ro"></div></div>
+      <div class="panel" style="margin-top:1rem"><h2>Regime</h2><div class="note" id="verdict"></div></div>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:1rem">
+    <h2>Why $N\varepsilon^{d-1}$</h2>
+    <p style="font-size:.9rem">
+      A sphere of diameter $\varepsilon$ moving at speed $|v|$ for time $t$ sweeps a tube of volume
+      $\asymp\varepsilon^{d-1}|v|t$. With $N$ centres at unit density it meets $\asymp N\varepsilon^{d-1}|v|t$
+      of them. Holding $N\varepsilon^{d-1}=\alpha$ fixed is the unique way to keep the collision rate finite
+      and non-zero — and it forces the volume fraction $N\varepsilon^{d}\approx\alpha\varepsilon\to0$.
+    </p>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, button, readout, fitCanvas, loop, HardSpheres, el } = window.H6;
+  head({
+    title: 'The Boltzmann–Grad dial',
+    maps: '[H6] §1.2.2 (scaling $\\mathbb{E}(N)\\varepsilon^{d-1}\\approx\\alpha$)',
+    lecture: '02-boltzmann-grad-scaling.md',
+    prev: '01-hard-spheres-torus.html', next: '03-ensemble-marginals.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+  const verdict = document.getElementById('verdict');
+
+  const MODES = {
+    grad:  'Boltzmann–Grad: N = α/ε   (α fixed)',
+    fixedN:'Fixed N, shrink ε   (→ collisionless)',
+    dense: 'Fixed ε, grow N   (→ dense, no theory)',
+  };
+  let mode = 'grad', alpha = 2.0, eps = 0.04, N = 50;
+  let sim, t0 = 0, c0 = 0, rate = 0;
+
+  function particleCount() {
+    if (mode === 'grad')   return Math.max(4, Math.round(alpha / eps));      // d = 2
+    if (mode === 'fixedN') return 50;
+    return Math.max(4, Math.round(alpha / 0.04));
+  }
+  function diameter() { return mode === 'dense' ? 0.04 : eps; }
+
+  function rebuild() {
+    N = Math.min(500, particleCount());
+    sim = new HardSpheres(N, diameter(), 771);
+    t0 = 0; c0 = 0; rate = 0;
+  }
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('ε', { min: 0.006, max: 0.075, step: 0.001, value: eps, fmt: v => v.toFixed(3) },
+    v => { eps = v; rebuild(); }).wrap);
+  ctl.append(slider('α', { min: 0.5, max: 5, step: 0.1, value: alpha, fmt: v => v.toFixed(1) },
+    v => { alpha = v; rebuild(); }).wrap);
+  const btns = el('div', { class: 'ctl' });
+  Object.keys(MODES).forEach(k => {
+    const b = button(k, () => { mode = k; rebuild(); paintBtns(); });
+    b.dataset.mode = k; btns.append(b);
+  });
+  ctl.append(btns);
+  function paintBtns() {
+    [...btns.children].forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  }
+  paintBtns(); rebuild();
+
+  loop(dt => {
+    sim.step(dt * 0.6);
+    sim.draw(ctx);
+    if (sim.t - t0 > 0.5) {
+      rate = (sim.collisions - c0) / (sim.t - t0) / sim.n;   // collisions per particle per unit time
+      t0 = sim.t; c0 = sim.collisions;
+    }
+    const vf = sim.volumeFraction();
+    ro.set([
+      ['mode', mode],
+      ['N', sim.n],
+      ['ε', sim.eps.toFixed(4)],
+      ['α = N·ε  (d=2)', (sim.n * sim.eps).toFixed(3), 'hi'],
+      ['volume fraction Nε²', vf.toExponential(2)],
+      ['measured coll./particle/time', rate.toFixed(2)],
+      ['mean free time ≈ 1/α', (1 / (sim.n * sim.eps)).toFixed(3)],
+    ]);
+    verdict.innerHTML = ({
+      grad: '<strong>The Grad scaling.</strong> Drag ε: N rises to compensate, α stays pinned, and the measured collision rate stays put. Meanwhile the volume fraction falls linearly in ε. This is the only scaling with a Boltzmann limit — and it is <em>necessarily</em> a dilute gas.',
+      fixedN: '<strong>Collisionless direction.</strong> N is frozen, so shrinking ε drives α→0 and the collision rate dies. The limit is free transport (Vlasov, with a force term). No Boltzmann.',
+      dense: '<strong>Dense direction.</strong> ε is frozen and N grows: α→∞ and the volume fraction approaches packing. This is a real fluid — and there is <em>no</em> rigorous derivation of any fluid equation in this regime. It is wide open.',
+    })[mode];
+  });
+
+  foot('d = 2 here, so the Grad relation reads Nε = α. Note that the third mode is what a critic means by "a real fluid": see <a href="../lectures/16-scope-and-critique.md">Lecture 16</a>.');
+});
+</script>
+</body>
+</html>

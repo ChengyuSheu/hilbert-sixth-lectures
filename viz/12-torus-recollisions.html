@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Torus recollisions and long bonds</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid two">
+    <div class="panel">
+      <h2>$\mathbb{R}^2$ — a pair collides at most once</h2>
+      <canvas id="cp"></canvas>
+    </div>
+    <div class="panel">
+      <h2>$\mathbb{T}^2$ — same data, and they meet again</h2>
+      <canvas id="ct"></canvas>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:1rem">
+    <div class="controls" id="ctl"></div>
+  </div>
+  <div class="grid two" style="margin-top:1rem">
+    <div class="panel">
+      <h2>Velocity-set explorer — property (♣)</h2>
+      <canvas id="cvs"></canvas>
+      <div class="note">
+        Shaded: velocities that carry a particle from the origin onto a target sphere of radius $\varepsilon$
+        after time $\Delta t$, <em>on the torus</em>. Sweep $\Delta t$ from short to long: the admissible set
+        fragments into slivers around lattice directions and its measure collapses. Long flight times are
+        <strong>strong</strong> constraints, not weak ones — that is the whole content of (♣).
+      </div>
+    </div>
+    <div>
+      <div class="panel"><h2>Measurements</h2><div id="ro"></div></div>
+      <div class="panel" style="margin-top:1rem">
+        <h2>Why this had to be invented</h2>
+        <p style="font-size:.86rem">
+          In $\mathbb{R}^d$, after a collision $(v_i-v_j)\cdot\omega&gt;0$: the pair separates and, moving in
+          straight lines, separates forever. On $\mathbb{T}^d$ they wrap and meet again. Worse, the
+          Burago–Ferleger–Kononenko bound — total collisions among $n$ spheres $\le C(n,d)$, uniformly —
+          is <strong>false</strong> on the torus. The classical accounting collapses, and the replacement is:
+          if a molecule is too big for the classical bound, some bond must be <em>long</em>, and long bonds
+          gain nearly $\varepsilon^{d-1}$ instead of $\varepsilon^{1-}$.
+        </p>
+      </div>
+    </div>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, button, readout, fitCanvas, cssVar, loop, minImage, mulberry32 } = window.H6;
+  head({
+    title: 'Torus recollisions and long bonds',
+    maps: '[H6] §1.4.1 “Long bonds and new elementary molecules”',
+    lecture: '12-torus-and-long-bonds.md',
+    prev: '11-excess-ledger.html', next: '13-algorithm-walkthrough.html',
+  });
+
+  const cp = fitCanvas(document.getElementById('cp'), 1);
+  const ct = fitCanvas(document.getElementById('ct'), 1);
+  const cvs = fitCanvas(document.getElementById('cvs'), 1.25);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+
+  /* ---------- two-particle comparison ---------- */
+  const EPS = 0.06;
+  let A, B, tSim = 0, hitsPlane = 0, hitsTorus = 0, running = true;
+  let trailP = [[], []], trailT = [[], []];
+  let firstHitTime = null, secondHitTime = null;
+
+  function reset(vy) {
+    A = { p: [0.30, 0.42], t: [0.30, 0.42], v: [0.55, vy] };
+    B = { p: [0.62, 0.55], t: [0.62, 0.55], v: [-0.35, -vy * 0.7] };
+    tSim = 0; hitsPlane = 0; hitsTorus = 0;
+    trailP = [[], []]; trailT = [[], []];
+    firstHitTime = null; secondHitTime = null;
+  }
+  let vy0 = 0.18;
+  reset(vy0);
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('initial vᵧ', { min: -0.6, max: 0.6, step: 0.01, value: vy0, fmt: v => v.toFixed(2) },
+    v => { vy0 = v; reset(v); }).wrap);
+  ctl.append(button('pause / run', () => { running = !running; }));
+  ctl.append(button('reset', () => reset(vy0)));
+
+  function collide(P, key) {
+    const wrap = key === 't';
+    const dx = wrap ? minImage(A[key][0] - B[key][0]) : A[key][0] - B[key][0];
+    const dy = wrap ? minImage(A[key][1] - B[key][1]) : A[key][1] - B[key][1];
+    const r = Math.hypot(dx, dy);
+    if (r > EPS || r === 0) return false;
+    const ox = dx / r, oy = dy / r;
+    const dvx = A.v[0] - B.v[0], dvy = A.v[1] - B.v[1];
+    const dot = dvx * ox + dvy * oy;
+    if (dot >= 0) return false;
+    A.v = [A.v[0] - dot * ox, A.v[1] - dot * oy];
+    B.v = [B.v[0] + dot * ox, B.v[1] + dot * oy];
+    return true;
+  }
+
+  function drawBox(c, key, hits, trails, wrap) {
+    const S = Math.min(c.W, c.H);
+    c.clearRect(0, 0, c.W, c.H);
+    c.save(); c.translate((c.W - S) / 2, (c.H - S) / 2);
+    c.strokeStyle = cssVar('--line'); c.strokeRect(.5, .5, S - 1, S - 1);
+    trails.forEach((tr, k) => {
+      c.strokeStyle = (k ? cssVar('--gold') : cssVar('--accent')) + '77';
+      c.lineWidth = 1;
+      c.beginPath();
+      tr.forEach((q, i) => {
+        const x = q[0] * S, y = q[1] * S;
+        if (i === 0 || Math.abs(q[0] - tr[i - 1][0]) > .5 || Math.abs(q[1] - tr[i - 1][1]) > .5) c.moveTo(x, y);
+        else c.lineTo(x, y);
+      });
+      c.stroke();
+    });
+    [[A, cssVar('--accent')], [B, cssVar('--gold')]].forEach(([P, col]) => {
+      c.fillStyle = col;
+      const px = P[key][0] * S, py = P[key][1] * S;
+      const imgs = wrap ? [-1, 0, 1] : [0];
+      imgs.forEach(ax => imgs.forEach(ay => {
+        c.beginPath(); c.arc(px + ax * S, py + ay * S, EPS / 2 * S, 0, 7); c.fill();
+      }));
+    });
+    c.restore();
+    c.fillStyle = hits > 1 ? cssVar('--bad') : cssVar('--ink-dim');
+    c.font = '12px ui-monospace, monospace';
+    c.fillText('pair collisions: ' + hits, 10, 18);
+  }
+
+  /* ---------- velocity-set explorer ---------- */
+  let dt = 0.35, epsV = 0.05, target = [0.3, 0.2];
+  ctl.append(slider('Δt (flight time)', { min: 0.05, max: 3.0, step: 0.05, value: dt, fmt: v => v.toFixed(2) },
+    v => { dt = v; drawVel(); }).wrap);
+  ctl.append(slider('ε (target radius)', { min: 0.01, max: 0.12, step: 0.005, value: epsV, fmt: v => v.toFixed(3) },
+    v => { epsV = v; drawVel(); }).wrap);
+
+  let velMeasure = 0;
+  function drawVel() {
+    const W = cvs.W, H = cvs.H, S = Math.min(W, H);
+    cvs.clearRect(0, 0, W, H);
+    const VMAX = 3.0;
+    const grid = 150;
+    let hitCount = 0, total = 0;
+    const img = cvs.createImageData(grid, grid);
+    for (let a = 0; a < grid; a++) for (let b = 0; b < grid; b++) {
+      const vx = (a / grid - .5) * 2 * VMAX;
+      const vy = (b / grid - .5) * 2 * VMAX;
+      // displacement after dt, reduced mod 1; does it land within eps of the target?
+      const dx = minImage(vx * dt - target[0]);
+      const dy = minImage(vy * dt - target[1]);
+      const hit = dx * dx + dy * dy < epsV * epsV;
+      total++;
+      const o = (b * grid + a) * 4;
+      if (hit) {
+        hitCount++;
+        img.data[o] = 251; img.data[o + 1] = 191; img.data[o + 2] = 36; img.data[o + 3] = 255;
+      } else {
+        img.data[o + 3] = 0;
+      }
+    }
+    velMeasure = hitCount / total;
+    // paint scaled
+    const tmp = document.createElement('canvas');
+    tmp.width = grid; tmp.height = grid;
+    tmp.getContext('2d').putImageData(img, 0, 0);
+    cvs.save();
+    cvs.translate((W - S) / 2, (H - S) / 2);
+    cvs.fillStyle = cssVar('--panel-2'); cvs.fillRect(0, 0, S, S);
+    cvs.imageSmoothingEnabled = false;
+    cvs.drawImage(tmp, 0, 0, S, S);
+    cvs.strokeStyle = cssVar('--line'); cvs.strokeRect(.5, .5, S - 1, S - 1);
+    cvs.restore();
+    cvs.fillStyle = cssVar('--ink-dim'); cvs.font = '11px ui-monospace, monospace';
+    cvs.fillText(`velocity plane, |v| ≤ ${VMAX}`, 10, 16);
+    cvs.fillText(`admissible fraction ≈ ${velMeasure.toExponential(2)}`, 10, H - 10);
+  }
+  drawVel();
+
+  loop(d => {
+    if (running) {
+      const h = Math.min(d, 0.02);
+      // plane copy
+      A.p = [A.p[0] + A.v[0] * h, A.p[1] + A.v[1] * h];
+      B.p = [B.p[0] + B.v[0] * h, B.p[1] + B.v[1] * h];
+      if (collide(null, 'p')) hitsPlane++;
+      // torus copy shares the velocities, so we integrate it separately with its own state
+      A.t = [(A.t[0] + A.v[0] * h + 1) % 1, (A.t[1] + A.v[1] * h + 1) % 1];
+      B.t = [(B.t[0] + B.v[0] * h + 1) % 1, (B.t[1] + B.v[1] * h + 1) % 1];
+      if (collide(null, 't')) {
+        hitsTorus++;
+        if (firstHitTime === null) firstHitTime = tSim;
+        else if (secondHitTime === null) secondHitTime = tSim;
+      }
+      tSim += h;
+      if (trailP[0].length < 4000) {
+        trailP[0].push([...A.p]); trailP[1].push([...B.p]);
+        trailT[0].push([...A.t]); trailT[1].push([...B.t]);
+      }
+    }
+    drawBox(cp, 'p', hitsPlane, trailP, false);
+    drawBox(ct, 't', hitsTorus, trailT, true);
+
+    const gap = (firstHitTime !== null && secondHitTime !== null) ? secondHitTime - firstHitTime : null;
+    ro.set([
+      ['simulated time', tSim.toFixed(2)],
+      ['collisions on ℝ²', hitsPlane, hitsPlane <= 1 ? 'hi' : 'lo'],
+      ['collisions on 𝕋²', hitsTorus, hitsTorus > 1 ? 'lo' : ''],
+      ['time between 1st and 2nd', gap === null ? '—' : gap.toFixed(3)],
+      ['is that a long bond?', gap === null ? '—' : (gap >= 0.25 ? 'YES' : 'no'), gap >= 0.25 ? 'hi' : ''],
+      ['— velocity set —', ''],
+      ['Δt', dt.toFixed(2)],
+      ['ε', epsV.toFixed(3)],
+      ['admissible fraction', velMeasure.toExponential(2), 'hi'],
+      ['naive πε² (no wrapping)', (Math.PI * epsV * epsV).toExponential(2)],
+      ['ratio to naive', velMeasure > 0 ? (velMeasure / (Math.PI * epsV * epsV)).toFixed(2) : '—'],
+    ]);
+  });
+
+  foot('The two boxes share the same velocities but integrate independently, so the plane copy shows what <em>would</em> happen without periodicity. Note the plane counter never exceeds 1, whatever you do to the initial data — that is the one-line lemma of <a href="../lectures/12-torus-and-long-bonds.md">Exercise 1</a>. The velocity-set measure is a grid estimate at simulation-scale ε, so its exponents are indicative, not asymptotic.');
+});
+</script>
+</body>
+</html>

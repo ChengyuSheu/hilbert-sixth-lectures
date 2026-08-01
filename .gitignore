@@ -1,0 +1,12 @@
+# editors / OS
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.vscode/
+.idea/
+
+# nothing is built here — this repository has no build step.
+# if you add tooling later, ignore its output below.
+node_modules/
+dist/

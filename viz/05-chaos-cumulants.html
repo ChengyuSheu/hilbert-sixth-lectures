@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chaos and cumulants</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid side">
+    <div class="panel">
+      <h2>Correlation genealogy on $\mathbb{T}^2$</h2>
+      <canvas id="cv"></canvas>
+      <div class="controls" id="ctl"></div>
+      <div class="note">
+        Gold = causally entangled with the tagged particle. The tinted set grows without bound, yet the
+        <em>marginal</em> factorization error stays small: chaos is an $L^1$ statement, never a pathwise one.
+      </div>
+    </div>
+    <div>
+      <div class="panel"><h2>Measurements</h2><div id="ro"></div></div>
+      <div class="panel" style="margin-top:1rem">
+        <h2>Factorization error over time</h2>
+        <canvas id="ce"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="panel" style="margin-top:1rem">
+    <h2>Theorem 1</h2>
+    <p style="font-size:.88rem">
+      $\bigl\lVert f_s(t,\boldsymbol{z}_s)-\prod_{j\le s}n(t,z_j)\,\mathbf{1}_{\mathcal{D}_s}\bigr\rVert_{L^1}\le\varepsilon^{\theta}$,
+      uniformly for $t\in[0,t_{\mathrm{fin}}]$ and $s\le\lvert\log\varepsilon\rvert$, provided
+      $\max(1,\alpha)\max(1,A)\max(1,t_{\mathrm{fin}})\ll(\log\lvert\log\varepsilon\rvert)^{1/2}$.
+      In cumulant language ([LT]) this says every $E_H$ is small — see
+      <a href="../lectures/08-cumulants-and-ansatz.md">Lecture 08</a>.
+    </p>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, button, readout, fitCanvas, cssVar, loop, HardSpheres, minImage } = window.H6;
+  head({
+    title: 'Chaos and cumulants',
+    maps: '[H6] §1.2.4, Theorem 1; cumulant expansion from [LT]',
+    lecture: '05-chaos-and-theorem-1.md',
+    prev: '04-collision-operator.html', next: '06-time-scales.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1);
+  const ce = fitCanvas(document.getElementById('ce'), 1.7);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+
+  let N = 80, eps = 0.03, tagged = 0;
+  let sim, entangled, series = [];
+
+  function rebuild() {
+    sim = new HardSpheres(N, eps, 4242);
+    entangled = new Uint8Array(N); entangled[tagged] = 1;
+    series = [];
+    sim.onCollision = e => {
+      if (entangled[e.i] || entangled[e.j]) { entangled[e.i] = 1; entangled[e.j] = 1; }
+    };
+  }
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('N', { min: 20, max: 200, step: 1, value: N }, v => { N = v | 0; tagged = 0; rebuild(); }).wrap);
+  ctl.append(slider('ε', { min: 0.008, max: 0.06, step: 0.001, value: eps, fmt: v => v.toFixed(3) },
+    v => { eps = v; rebuild(); }).wrap);
+  ctl.append(button('reset', rebuild));
+  rebuild();
+
+  /* ---- empirical factorization error -------------------------------------
+     We bin the pair (speed_i, speed_j) over all pairs to estimate f_2, and
+     compare against the product of the single-particle speed histogram.
+     The L1 distance between the joint histogram and the product histogram is a
+     coarse but honest proxy for  || f_2 - f_1 (x) f_1 ||.                    */
+  const B = 10, VMAX = 1.1;
+  function factorizationError() {
+    const n = sim.n;
+    const one = new Float64Array(B);
+    const bin = i => Math.min(B - 1, Math.floor(Math.hypot(sim.vx[i], sim.vy[i]) / VMAX * B));
+    const bi = new Uint8Array(n);
+    for (let i = 0; i < n; i++) { bi[i] = bin(i); one[bi[i]]++; }
+    for (let k = 0; k < B; k++) one[k] /= n;
+
+    const joint = new Float64Array(B * B);
+    let pairs = 0;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      // restrict to non-overlapping, i.e. the 1_{D_2} support (always true here)
+      joint[bi[i] * B + bi[j]]++; joint[bi[j] * B + bi[i]]++; pairs += 2;
+    }
+    let err = 0;
+    for (let a = 0; a < B; a++) for (let b = 0; b < B; b++) {
+      err += Math.abs(joint[a * B + b] / pairs - one[a] * one[b]);
+    }
+    return err;
+  }
+
+  function drawErr() {
+    const W = ce.W, H = ce.H, pad = 30;
+    ce.clearRect(0, 0, W, H);
+    const dim = cssVar('--ink-dim');
+    ce.strokeStyle = cssVar('--line');
+    ce.beginPath(); ce.moveTo(pad, 10); ce.lineTo(pad, H - pad); ce.lineTo(W - 10, H - pad); ce.stroke();
+    if (series.length > 1) {
+      const hi = Math.max(0.02, ...series);
+      ce.strokeStyle = cssVar('--accent'); ce.lineWidth = 2; ce.beginPath();
+      series.forEach((v, k) => {
+        const x = pad + k / Math.max(1, series.length - 1) * (W - pad - 10);
+        const y = H - pad - (v / hi) * (H - pad - 14);
+        k ? ce.lineTo(x, y) : ce.moveTo(x, y);
+      });
+      ce.stroke();
+      ce.fillStyle = dim; ce.font = '10px ui-monospace, monospace';
+      ce.fillText(hi.toFixed(3), 4, 16);
+    }
+    ce.fillStyle = dim; ce.font = '10px ui-monospace, monospace';
+    ce.fillText('‖f₂ − f₁⊗f₁‖ proxy vs time', pad + 4, H - 10);
+  }
+
+  function trace(c, S) {
+    for (let i = 0; i < sim.n; i++) {
+      if (!entangled[i]) continue;
+      c.fillStyle = cssVar('--gold');
+      c.beginPath(); c.arc(sim.x[i] * S, sim.y[i] * S, Math.max(1.6, eps / 2 * S), 0, 7); c.fill();
+    }
+    c.strokeStyle = cssVar('--bad'); c.lineWidth = 2;
+    c.beginPath(); c.arc(sim.x[tagged] * S, sim.y[tagged] * S, Math.max(6, eps / 2 * S + 5), 0, 7); c.stroke();
+  }
+
+  let acc = 0;
+  loop(dt => {
+    sim.step(dt * 0.6);
+    acc += dt;
+    if (acc > 0.12) { acc = 0; series.push(factorizationError()); if (series.length > 400) series.shift(); }
+    sim.draw(ctx, { trace });
+    drawErr();
+    let ent = 0; for (let i = 0; i < sim.n; i++) ent += entangled[i];
+    const err = series.length ? series[series.length - 1] : 0;
+    ro.set([
+      ['N', sim.n],
+      ['ε', sim.eps.toFixed(3)],
+      ['α = Nε', sim.alpha().toFixed(2)],
+      ['time', sim.t.toFixed(2)],
+      ['α·t (mean free times)', (sim.alpha() * sim.t).toFixed(2)],
+      ['collisions', sim.collisions],
+      ['recollisions', sim.recollisions, sim.recollisions ? 'lo' : 'hi'],
+      ['recollisions / collision', sim.collisions ? (sim.recollisions / sim.collisions).toFixed(3) : '0'],
+      ['entangled particles', ent + ' / ' + sim.n, 'lo'],
+      ['factorization error', err.toFixed(4), err < 0.15 ? 'hi' : 'lo'],
+    ]);
+  });
+
+  document.getElementById('cv').addEventListener('click', ev => {
+    const r = ev.target.getBoundingClientRect();
+    const S = Math.min(r.width, r.height);
+    const mx = (ev.clientX - r.left - (r.width - S) / 2) / S;
+    const my = (ev.clientY - r.top - (r.height - S) / 2) / S;
+    let best = 0, bd = 1e9;
+    for (let i = 0; i < sim.n; i++) {
+      const d = minImage(sim.x[i] - mx) ** 2 + minImage(sim.y[i] - my) ** 2;
+      if (d < bd) { bd = d; best = i; }
+    }
+    tagged = best; entangled = new Uint8Array(sim.n); entangled[tagged] = 1;
+  });
+
+  foot('The factorization error is a coarse speed-histogram proxy over a modest particle number — it demonstrates the phenomenon, it does not measure the theorem\'s $\\varepsilon^{\\theta}$. Lower ε at fixed α and watch the recollision rate starve: that $\\varepsilon^{d-1}$ suppression is what the whole argument monetises.');
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grand canonical ensemble and marginals</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid two">
+    <div class="panel">
+      <h2>A sample from $W_{0,N}$</h2>
+      <canvas id="cv"></canvas>
+      <div class="controls" id="ctl"></div>
+    </div>
+    <div class="panel">
+      <h2>Pair correlation $f_2 / (f_1\otimes f_1)$</h2>
+      <canvas id="cg"></canvas>
+      <div class="note">
+        The <strong>hole</strong> below separation $\varepsilon$ is $\mathbf{1}_{\mathcal{D}_2}$.
+        It never disappears — which is why Theorem 1 must carry that indicator.
+      </div>
+    </div>
+  </div>
+  <div class="grid two" style="margin-top:1rem">
+    <div class="panel"><h2>Ensemble statistics</h2><div id="ro"></div></div>
+    <div class="panel">
+      <h2>Definition 1.3</h2>
+      <p style="font-size:.86rem">
+        $W_{0,N}(\boldsymbol{z}_N)=\dfrac{(\alpha\varepsilon^{-(d-1)})^{N}}{N!}\prod_{j}n_0(z_j)\,\mathbf{1}_{\mathcal{D}_N}$,
+        and
+        $f_s=(\alpha^{-1}\varepsilon^{d-1})^{s}\sum_{n\ge0}\frac1{n!}\displaystyle\int W_{s+n}\,dz_{s+1}\cdots dz_{s+n}$.
+        The fugacity $\alpha\varepsilon^{-(d-1)}$ is exactly what makes $\mathbb{E}(N)\varepsilon^{d-1}\approx\alpha$.
+      </p>
+    </div>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, button, readout, fitCanvas, cssVar, mulberry32, minImage } = window.H6;
+  head({
+    title: 'Grand canonical ensemble and marginals',
+    maps: '[H6] §1.2.2, Definition 1.3',
+    lecture: '03-grand-canonical-ensemble.md',
+    prev: '02-boltzmann-grad.html', next: '04-collision-operator.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1);
+  const cg = fitCanvas(document.getElementById('cg'), 1.45);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+
+  let eps = 0.03, alpha = 2.5, nonUniform = true, seed = 5;
+  const BINS = 60, RMAX = 0.35;
+  let hist = new Float64Array(BINS), samples = 0, Ns = [], lastPts = [];
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('ε', { min: 0.008, max: 0.07, step: 0.001, value: eps, fmt: v => v.toFixed(3) },
+    v => { eps = v; resetStats(); }).wrap);
+  ctl.append(slider('α', { min: 0.5, max: 6, step: 0.1, value: alpha, fmt: v => v.toFixed(1) },
+    v => { alpha = v; resetStats(); }).wrap);
+  ctl.append(button('toggle n₀ (uniform / bump)', () => { nonUniform = !nonUniform; resetStats(); }));
+  ctl.append(button('reset statistics', resetStats));
+
+  function resetStats() { hist = new Float64Array(BINS); samples = 0; Ns = []; }
+
+  /** n0: either uniform, or a smooth bump on the torus. Normalised to 1. */
+  function n0(x, y) {
+    if (!nonUniform) return 1;
+    const g = 1 + 0.8 * Math.cos(2 * Math.PI * x) * Math.cos(2 * Math.PI * y);
+    return g;                                  // mean over T^2 is 1
+  }
+
+  function poisson(lambda, rng) {
+    // Knuth for moderate lambda; normal approximation for large
+    if (lambda > 60) return Math.max(0, Math.round(lambda + Math.sqrt(lambda) * (rng() + rng() + rng() + rng() + rng() + rng() - 3)));
+    let L = Math.exp(-lambda), k = 0, p = 1;
+    do { k++; p *= rng(); } while (p > L);
+    return k - 1;
+  }
+
+  /** One draw from the grand canonical ensemble: Poisson N, iid from n0, reject overlaps. */
+  function sample() {
+    const rng = mulberry32(seed++);
+    const mean = alpha / eps;                  // E(N) = alpha * eps^{-(d-1)}, d = 2
+    const N = Math.min(600, poisson(mean, rng));
+    const pts = [];
+    let tries = 0;
+    while (pts.length < N && tries++ < N * 60) {
+      const x = rng(), y = rng();
+      if (rng() > n0(x, y) / 1.8) continue;    // rejection sampling from n0
+      let ok = true;
+      for (const p of pts) {
+        const dx = minImage(x - p[0]), dy = minImage(y - p[1]);
+        if (dx * dx + dy * dy < eps * eps) { ok = false; break; }
+      }
+      if (ok) pts.push([x, y]);
+    }
+    return pts;
+  }
+
+  function accumulate(pts) {
+    const n = pts.length;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      const dx = minImage(pts[i][0] - pts[j][0]), dy = minImage(pts[i][1] - pts[j][1]);
+      const r = Math.hypot(dx, dy);
+      if (r < RMAX) hist[Math.floor(r / RMAX * BINS)] += 2;
+    }
+    samples++; Ns.push(n);
+  }
+
+  function drawSample(pts) {
+    const S = Math.min(ctx.W, ctx.H);
+    ctx.clearRect(0, 0, ctx.W, ctx.H);
+    ctx.save(); ctx.translate((ctx.W - S) / 2, (ctx.H - S) / 2);
+    if (nonUniform) {                            // shade n0
+      const img = 40;
+      for (let a = 0; a < img; a++) for (let b = 0; b < img; b++) {
+        const v = n0((a + .5) / img, (b + .5) / img);
+        ctx.fillStyle = `rgba(110,168,255,${0.05 * v})`;
+        ctx.fillRect(a * S / img, b * S / img, S / img + 1, S / img + 1);
+      }
+    }
+    ctx.strokeStyle = cssVar('--line'); ctx.strokeRect(.5, .5, S - 1, S - 1);
+    ctx.fillStyle = cssVar('--accent');
+    const R = Math.max(1.2, eps / 2 * S);
+    for (const p of pts) { ctx.beginPath(); ctx.arc(p[0] * S, p[1] * S, R, 0, 7); ctx.fill(); }
+    ctx.restore();
+  }
+
+  function drawG() {
+    const W = cg.W, H = cg.H, pad = 34;
+    cg.clearRect(0, 0, W, H);
+    const meanN = Ns.length ? Ns.reduce((a, b) => a + b, 0) / Ns.length : 0;
+    // ideal-gas expected pairs in annulus: N^2 * 2*pi*r*dr  (unit-density torus)
+    const dr = RMAX / BINS;
+    const g = [];
+    for (let k = 0; k < BINS; k++) {
+      const r = (k + .5) * dr;
+      const expected = samples * meanN * meanN * 2 * Math.PI * r * dr;
+      g.push(expected > 0 ? hist[k] / expected : 0);
+    }
+    const yMax = 1.8;
+    const X = k => pad + (k / BINS) * (W - pad - 12);
+    const Y = v => H - pad - (Math.min(v, yMax) / yMax) * (H - pad - 14);
+
+    cg.strokeStyle = cssVar('--line'); cg.lineWidth = 1;
+    cg.beginPath(); cg.moveTo(pad, Y(0)); cg.lineTo(W - 12, Y(0)); cg.stroke();
+    cg.setLineDash([4, 4]); cg.beginPath(); cg.moveTo(pad, Y(1)); cg.lineTo(W - 12, Y(1)); cg.stroke();
+    cg.setLineDash([]);
+
+    // the epsilon hole boundary
+    const kEps = eps / RMAX * BINS;
+    cg.strokeStyle = cssVar('--bad'); cg.beginPath();
+    cg.moveTo(X(kEps), Y(0)); cg.lineTo(X(kEps), Y(yMax)); cg.stroke();
+
+    cg.strokeStyle = cssVar('--accent'); cg.lineWidth = 2; cg.beginPath();
+    g.forEach((v, k) => { const x = X(k), y = Y(v); k ? cg.lineTo(x, y) : cg.moveTo(x, y); });
+    cg.stroke();
+
+    cg.fillStyle = cssVar('--ink-dim'); cg.font = '10px ui-monospace, monospace';
+    cg.fillText('1', 8, Y(1) + 3); cg.fillText('0', 8, Y(0) + 3);
+    cg.fillText('separation |x₁ − x₂|', pad, H - 8);
+    cg.fillStyle = cssVar('--bad'); cg.fillText('ε', X(kEps) + 3, 14);
+  }
+
+  function tick() {
+    const pts = sample();
+    accumulate(pts);
+    lastPts = pts;
+    drawSample(pts);
+    drawG();
+    const meanN = Ns.reduce((a, b) => a + b, 0) / Ns.length;
+    ro.set([
+      ['samples drawn', samples],
+      ['ε', eps.toFixed(3)],
+      ['α (target)', alpha.toFixed(2)],
+      ['E(N) = α/ε', (alpha / eps).toFixed(0)],
+      ['mean N realised', meanN.toFixed(1)],
+      ['α realised = E(N)·ε', (meanN * eps).toFixed(3), 'hi'],
+      ['n₀', nonUniform ? 'bump' : 'uniform'],
+      ['excluded-volume hole', 'r < ' + eps.toFixed(3), 'lo'],
+    ]);
+    setTimeout(tick, 260);
+  }
+  tick();
+
+  foot('Rejection sampling means the realised α drifts a little below the target at large ε — the $\\mathbf{1}_{\\mathcal{D}_N}$ correction to the partition function, which is $1+O(\\varepsilon)$ in the Grad scaling. This panel shows the $t=0$ structure of Definition 1.3; it does not evolve the ensemble.');
+});
+</script>
+</body>
+</html>

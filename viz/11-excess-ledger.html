@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The excess ledger</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="panel">
+    <h2>Achieved excess vs circuit rank $\rho$ — Proposition 3.8 says every point clears the line</h2>
+    <canvas id="cv"></canvas>
+    <div class="controls" id="ctl"></div>
+  </div>
+  <div class="grid two" style="margin-top:1rem">
+    <div class="panel"><h2>Population</h2><div id="ro"></div></div>
+    <div class="panel">
+      <h2>What is being tested</h2>
+      <p style="font-size:.87rem">
+        The <strong>excess</strong> (Definition 3.6) is “the best power of $\varepsilon$ by which the trivial
+        estimate can be improved”. It is <em>additive under cutting</em>, which turns a product bound into a
+        score. Since the number of molecules grows factorially and each independent cycle is one recollision,
+        the requirement is a constant gain <em>per cycle</em>:
+        $\mathrm{excess}(\mathbb{M})\gtrsim c\,\rho(\mathbb{M})$, uniformly. That is
+        <strong>Proposition 3.8</strong>, and it is the mathematical heart of the paper.
+      </p>
+      <p style="font-size:.87rem">
+        Switch off the long-bond gain and the torus-generated molecules fall below the line. Switch it on and
+        the cloud lifts. That difference is precisely what [H6] adds to [LT].
+      </p>
+    </div>
+  </div>
+  <div class="note">
+    <strong>This illustrates the logic of Proposition 3.8; it does not test it.</strong> The scoring is the
+    caricature of <a href="../lectures/10-cutting-operations.md">Lecture 10</a> §7 and the molecules are
+    random graphs, not collision histories that a hard-sphere flow can actually realise.
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, toggle, button, readout, fitCanvas, cssVar, Molecule, mulberry32 } = window.H6;
+  head({
+    title: 'The excess ledger',
+    maps: '[H6] §3.2 Definition 3.6 (excess), §3.3 Proposition 3.8',
+    lecture: '11-excess-and-proposition-3-8.md',
+    prev: '10-cutting-sandbox.html', next: '12-torus-recollisions.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 2.0);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+
+  const UPSILON = 0.35, PENALTY = 0.30, LONGGAIN = 0.8;   // caricature: a long bond pays far more than a {33}
+  const LONGTHRESH = 0.4;
+  let c = 0.30;               // required gain per cycle
+  let longOn = true, torusMode = true, nSamples = 240, seed = 1;
+  let cloud = [];
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('c (required gain per cycle)', { min: 0.05, max: 0.6, step: 0.01, value: c, fmt: v => v.toFixed(2) },
+    v => { c = v; draw(); }).wrap);
+  ctl.append(slider('sample size', { min: 60, max: 600, step: 20, value: nSamples },
+    v => { nSamples = v | 0; regen(); }).wrap);
+  ctl.append(toggle('long-bond gain ON', true, v => { longOn = v; regen(); }).wrap);
+  ctl.append(toggle('torus molecules (unbounded collisions)', true, v => { torusMode = v; regen(); }).wrap);
+  ctl.append(button('resample', () => { seed++; regen(); }));
+
+  /** random molecule; on the torus we allow far more bonds per atom (no BFK bound) */
+  function randomMolecule(rng) {
+    const V = 4 + ((rng() * 8) | 0);
+    const mol = new Molecule();
+    for (let i = 0; i < V; i++) mol.addAtom({ t: rng(), freeEnds: rng() < .3 ? 1 : 0 });
+    // spanning path so the graph is connected
+    const order = mol.atoms.map(a => a.id).sort(() => rng() - .5);
+    for (let i = 1; i < V; i++) mol.addBond(order[i - 1], order[i]);
+    // extra edges create cycles; torus mode allows many more
+    const extra = torusMode ? ((rng() * V * 1.4) | 0) : ((rng() * 2.2) | 0);
+    for (let k = 0; k < extra; k++) {
+      const a = (rng() * V) | 0, b = (rng() * V) | 0;
+      if (a !== b) mol.addBond(a, b);
+    }
+    return mol;
+  }
+
+  /** greedy cutting under the caricature scoring; returns achieved excess */
+  function score(mol) {
+    const removed = new Set();          // consumed atoms
+    const cutBonds = new Set();         // bonds already cut at (long-bond harvest)
+    const liveDeg = id => {
+      let d = mol.atoms[id].freeEnds || 0;
+      for (const b of mol.bonds) {
+        if (cutBonds.has(b.id)) continue;
+        if (b.i === id && !removed.has(b.j)) d++;
+        if (b.j === id && !removed.has(b.i)) d++;
+      }
+      return d;
+    };
+    let excess = 0, n33 = 0, n4 = 0, nLong = 0, guard = 0;
+    // Long bonds are harvested first, by CUTTING AT THE BOND ([H6] §1.4.2).
+    // Cutting a bond removes an edge, so it kills one independent cycle — which is
+    // why the gain is naturally "per recollision" rather than "per atom".
+    if (longOn) {
+      for (const b of mol.longBonds(LONGTHRESH)) {
+        cutBonds.add(b.id);
+        excess += LONGGAIN; nLong++;
+      }
+    }
+    while (removed.size < mol.atoms.length && guard++ < 200) {
+      let pick = null, partner = null;
+      for (const a of mol.atoms) {
+        if (removed.has(a.id) || liveDeg(a.id) !== 3) continue;
+        for (const b of mol.bonds) {
+          if (cutBonds.has(b.id)) continue;
+          const o = b.i === a.id ? b.j : b.j === a.id ? b.i : null;
+          if (o !== null && !removed.has(o) && liveDeg(o) === 3) { pick = a.id; partner = o; break; }
+        }
+        if (pick !== null) break;
+      }
+      if (pick !== null) { removed.add(pick); removed.add(partner); excess += UPSILON; n33++; continue; }
+      const live = mol.atoms.filter(a => !removed.has(a.id));
+      if (!live.length) break;
+      const a = live.sort((p, q) => liveDeg(p.id) - liveDeg(q.id))[0];
+      if (liveDeg(a.id) >= 4) { excess -= PENALTY; n4++; }
+      removed.add(a.id);
+    }
+    return { excess, n33, n4, nLong };
+  }
+
+  function regen() {
+    const rng = mulberry32(seed * 6151);
+    cloud = [];
+    for (let k = 0; k < nSamples; k++) {
+      const mol = randomMolecule(rng);
+      const rho = mol.circuitRank();
+      cloud.push({ rho, ...score(mol) });
+    }
+    draw();
+  }
+
+  function draw() {
+    const W = ctx.W, H = ctx.H, pad = 46;
+    ctx.clearRect(0, 0, W, H);
+    const dim = cssVar('--ink-dim'), good = cssVar('--good'), bad = cssVar('--bad'), acc = cssVar('--accent');
+    const rhoMax = Math.max(6, ...cloud.map(p => p.rho));
+    const exMax = Math.max(2, ...cloud.map(p => p.excess), c * rhoMax);
+    const exMin = Math.min(0, ...cloud.map(p => p.excess));
+    const X = r => pad + (r / rhoMax) * (W - pad - 20);
+    const Y = e => H - pad - ((e - exMin) / (exMax - exMin)) * (H - pad - 18);
+
+    // axes
+    ctx.strokeStyle = cssVar('--line'); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad, 12); ctx.lineTo(pad, H - pad); ctx.lineTo(W - 20, H - pad); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pad, Y(0)); ctx.lineTo(W - 20, Y(0)); ctx.stroke();
+
+    // the Proposition 3.8 line
+    ctx.strokeStyle = acc; ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.moveTo(X(0), Y(0)); ctx.lineTo(X(rhoMax), Y(c * rhoMax)); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = acc; ctx.font = '11px ui-monospace, monospace';
+    ctx.fillText('excess = c·ρ', X(rhoMax) - 90, Y(c * rhoMax) - 8);
+
+    let below = 0, belowWithLong = 0;
+    cloud.forEach(p => {
+      const ok = p.excess >= c * p.rho;
+      if (!ok) { below++; if (p.nLong > 0) belowWithLong++; }
+      ctx.fillStyle = (ok ? good : bad) + 'bb';
+      ctx.beginPath();
+      ctx.arc(X(p.rho) + (Math.random() - .5) * 6, Y(p.excess), p.nLong > 0 ? 4.5 : 3, 0, 7);
+      ctx.fill();
+      if (!ok) { ctx.strokeStyle = bad; ctx.lineWidth = 1; ctx.stroke(); }
+    });
+
+    ctx.fillStyle = dim; ctx.font = '11px ui-monospace, monospace';
+    ctx.fillText('circuit rank ρ  (= number of recollisions) →', pad + 4, H - 14);
+    ctx.save(); ctx.translate(14, H / 2); ctx.rotate(-Math.PI / 2);
+    ctx.fillText('achieved excess', 0, 0); ctx.restore();
+
+    const mean = cloud.reduce((s, p) => s + p.excess, 0) / (cloud.length || 1);
+    const longs = cloud.filter(p => p.nLong > 0).length;
+    ro.set([
+      ['molecules sampled', cloud.length],
+      ['regime', torusMode ? 'torus (no BFK bound)' : 'Euclidean-like'],
+      ['long-bond gain', longOn ? 'ON' : 'OFF', longOn ? 'hi' : 'lo'],
+      ['mean ρ', (cloud.reduce((s, p) => s + p.rho, 0) / (cloud.length || 1)).toFixed(2)],
+      ['mean excess', mean.toFixed(2)],
+      ['containing a long bond', longs],
+      ['— Proposition 3.8 —', ''],
+      ['required c', c.toFixed(2)],
+      ['below the line', below, below ? 'lo' : 'hi'],
+      ['fraction failing', ((below / (cloud.length || 1)) * 100).toFixed(1) + '%', below ? 'lo' : 'hi'],
+    ]);
+  }
+
+  regen();
+  window.addEventListener('resize', draw);
+  foot('Turn the long-bond gain off with torus molecules selected: a red band appears below the line — the gap that the classical algorithms of [LT] leave on $\\mathbb{T}^d$. Turning it back on lifts the cloud, because the molecules that fail are exactly the ones large enough to be forced to contain a long bond (the pigeonhole of <a href="../lectures/12-torus-and-long-bonds.md">Lecture 12</a> §5).');
+});
+</script>
+</body>
+</html>

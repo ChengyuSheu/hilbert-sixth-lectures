@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cutting sandbox</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid side">
+    <div class="panel">
+      <h2>Click an atom to cut it free</h2>
+      <canvas id="cv"></canvas>
+      <div class="controls" id="ctl"></div>
+      <div class="note">
+        Cutting partitions $\mathbb{M}$ into $\mathbb{M}_1$ (<em>cut free</em>, integrated first) and
+        $\mathbb{M}_2$ (<em>cut fixed</em>), so that $I_{\mathbb{M}}=I_{\mathbb{M}_1}\circ I_{\mathbb{M}_2}$.
+        Crossing bonds become free or fixed <em>ends</em> — which is why <strong>degree changes as you cut</strong>.
+        Degree is a property of the molecule <em>together with the cutting sequence</em>.
+      </div>
+    </div>
+    <div>
+      <div class="panel"><h2>Ledger</h2><div id="ro"></div></div>
+      <div class="panel" style="margin-top:1rem"><h2>Pieces produced</h2><div id="pieces" style="font-family:var(--mono);font-size:.78rem"></div></div>
+    </div>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, button, readout, fitCanvas, cssVar, Molecule, mulberry32 } = window.H6;
+  head({
+    title: 'Cutting sandbox',
+    maps: '[H6] §2.2 “Cutting operations”, §3.1, Definitions 2.4/2.6, Propositions 3.2–3.4',
+    lecture: '10-cutting-operations.md',
+    prev: '09-molecule-explorer.html', next: '11-excess-ledger.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1.25);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+  const piecesEl = document.getElementById('pieces');
+
+  const UPSILON = 0.35;                 // caricature gain per {33}
+  const PENALTY = 0.30;                 // caricature cost per deg>=4
+
+  /* --- gallery of molecules: [atomTimes, edges] --- */
+  const GALLERY = {
+    'path of degree-3': {
+      t: [.15, .35, .55, .75], e: [[0, 1], [1, 2], [2, 3]], ends: [2, 1, 1, 2],
+    },
+    'single cycle (ρ=1)': {
+      t: [.2, .4, .6, .8], e: [[0, 1], [1, 2], [2, 3], [3, 0]], ends: [1, 1, 1, 1],
+    },
+    'theta graph (ρ=2)': {
+      t: [.15, .4, .65, .9], e: [[0, 1], [1, 2], [2, 3], [0, 3], [1, 3]], ends: [1, 0, 1, 0],
+    },
+    'torus tangle — cannot be beaten': {
+      t: [.10, .16, .22, .28, .34, .40], ends: [1, 0, 0, 0, 0, 1],
+      e: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [0, 2], [1, 3], [2, 4], [3, 5]],
+    },
+  };
+
+  let name = 'single cycle (ρ=1)';
+  let mol, removed, pieces, positions;
+
+  function load(k) {
+    name = k;
+    const g = GALLERY[k];
+    mol = new Molecule();
+    g.t.forEach((t, i) => mol.addAtom({ t, freeEnds: g.ends[i] || 0 }));
+    g.e.forEach(([a, b]) => mol.addBond(a, b));
+    removed = new Set();
+    pieces = [];
+    layout();
+    redraw();
+  }
+
+  function layout() {
+    const n = mol.atoms.length;
+    positions = mol.atoms.map((a, k) => {
+      const ang = (k / n) * 2 * Math.PI - Math.PI / 2;
+      return [0.5 + 0.32 * Math.cos(ang), 0.5 + 0.32 * Math.sin(ang)];
+    });
+  }
+
+  /** degree of an atom in the *remaining* molecule, counting removed neighbours
+      as fixed ends (excluded) and original free ends (included). */
+  function liveDegree(id) {
+    let d = mol.atoms[id].freeEnds || 0;
+    for (const b of mol.bonds) {
+      if (b.i === id && !removed.has(b.j)) d++;
+      if (b.j === id && !removed.has(b.i)) d++;
+    }
+    return d;
+  }
+
+  function cutFree(id) {
+    if (removed.has(id)) return;
+    const d = liveDegree(id);
+    // is there a live neighbour also of degree 3? then this is a {33}
+    let partner = null;
+    for (const b of mol.bonds) {
+      const o = b.i === id ? b.j : b.j === id ? b.i : null;
+      if (o === null || removed.has(o)) continue;
+      if (d === 3 && liveDegree(o) === 3) { partner = o; break; }
+    }
+    if (partner !== null) {
+      removed.add(id); removed.add(partner);
+      pieces.push({ type: '{33}', atoms: [id, partner], gain: UPSILON });
+    } else if (d >= 4) {
+      removed.add(id);
+      pieces.push({ type: '{4}', atoms: [id], gain: -PENALTY });
+    } else {
+      removed.add(id);
+      pieces.push({ type: d === 3 ? '{3}' : '{2}', atoms: [id], gain: 0 });
+    }
+    redraw();
+  }
+
+  function greedy() {
+    let guard = 0;
+    while (removed.size < mol.atoms.length && guard++ < 100) {
+      // prefer a live {33} pair, then low degree, then whatever is left
+      let chosen = null;
+      for (const a of mol.atoms) {
+        if (removed.has(a.id) || liveDegree(a.id) !== 3) continue;
+        for (const b of mol.bonds) {
+          const o = b.i === a.id ? b.j : b.j === a.id ? b.i : null;
+          if (o !== null && !removed.has(o) && liveDegree(o) === 3) { chosen = a.id; break; }
+        }
+        if (chosen !== null) break;
+      }
+      if (chosen === null) {
+        const live = mol.atoms.filter(a => !removed.has(a.id));
+        if (!live.length) break;
+        chosen = live.sort((p, q) => liveDegree(p.id) - liveDegree(q.id))[0].id;
+      }
+      cutFree(chosen);
+    }
+  }
+
+  const ctl = document.getElementById('ctl');
+  Object.keys(GALLERY).forEach(k => ctl.append(button(k, () => load(k))));
+  ctl.append(button('greedy {33}-maximiser', () => { load(name); greedy(); }));
+  ctl.append(button('reset', () => load(name)));
+
+  document.getElementById('cv').addEventListener('click', e => {
+    const r = e.target.getBoundingClientRect();
+    const mx = (e.clientX - r.left) / r.width, my = (e.clientY - r.top) / r.height;
+    let best = null, bd = 1e9;
+    positions.forEach((p, k) => {
+      const d = (p[0] - mx) ** 2 + ((p[1] - my) * (r.height / r.width)) ** 2;
+      if (d < bd) { bd = d; best = k; }
+    });
+    if (bd < 0.006) cutFree(best);
+  });
+
+  function redraw() {
+    const W = ctx.W, H = ctx.H;
+    ctx.clearRect(0, 0, W, H);
+    const X = p => p[0] * W, Y = p => p[1] * H;
+
+    mol.bonds.forEach(b => {
+      const dead = removed.has(b.i) || removed.has(b.j);
+      const both3 = !dead && liveDegree(b.i) === 3 && liveDegree(b.j) === 3;
+      ctx.strokeStyle = dead ? cssVar('--line') + '55' : both3 ? cssVar('--good') : cssVar('--line');
+      ctx.lineWidth = both3 ? 3 : 1.4;
+      ctx.beginPath();
+      ctx.moveTo(X(positions[b.i]), Y(positions[b.i]));
+      ctx.lineTo(X(positions[b.j]), Y(positions[b.j]));
+      ctx.stroke();
+    });
+    mol.atoms.forEach((a, k) => {
+      const gone = removed.has(a.id);
+      const d = liveDegree(a.id);
+      ctx.globalAlpha = gone ? 0.22 : 1;
+      ctx.fillStyle = d >= 4 ? cssVar('--bad') : d === 3 ? cssVar('--good') : cssVar('--accent');
+      ctx.beginPath(); ctx.arc(X(positions[k]), Y(positions[k]), 15, 0, 7); ctx.fill();
+      ctx.fillStyle = cssVar('--bg'); ctx.font = '600 12px ui-monospace, monospace'; ctx.textAlign = 'center';
+      ctx.fillText(String(d), X(positions[k]), Y(positions[k]) + 4);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = cssVar('--ink-dim'); ctx.font = '9px ui-monospace, monospace';
+      ctx.fillText('𝔫' + k, X(positions[k]), Y(positions[k]) - 21);
+    });
+
+    const rho = mol.circuitRank();
+    const n33 = pieces.filter(p => p.type === '{33}').length;
+    const n4 = pieces.filter(p => p.type === '{4}').length;
+    const excess = pieces.reduce((s, p) => s + p.gain, 0);
+    const target = UPSILON * rho;
+    ro.set([
+      ['molecule', name],
+      ['atoms V', mol.atoms.length],
+      ['bonds E', mol.bonds.length],
+      ['circuit rank ρ', rho],
+      ['— cutting —', ''],
+      ['atoms consumed', removed.size + ' / ' + mol.atoms.length],
+      ['#{33} (good)', n33, n33 ? 'hi' : ''],
+      ['#{4} (costly)', n4, n4 ? 'lo' : 'hi'],
+      ['accumulated excess', excess.toFixed(2), excess >= target ? 'hi' : 'lo'],
+      ['target ≈ υ·ρ', target.toFixed(2)],
+      ['verdict', removed.size < mol.atoms.length ? 'in progress'
+        : (excess >= target ? 'target met' : 'FAILED'),
+        removed.size < mol.atoms.length ? '' : (excess >= target ? 'hi' : 'lo')],
+    ]);
+    piecesEl.innerHTML = pieces.length
+      ? pieces.map((p, i) => `${i + 1}. <span class="tag ${p.gain > 0 ? 'good' : p.gain < 0 ? 'bad' : ''}">${p.type}</span> atoms {${p.atoms.map(a => '𝔫' + a).join(', ')}} &nbsp; gain ${p.gain >= 0 ? '+' : ''}${p.gain.toFixed(2)}`).join('<br>')
+      : '<span style="color:var(--ink-dim)">no cuts yet</span>';
+  }
+
+  load(name);
+  window.addEventListener('resize', redraw);
+  foot('<strong>Caricature scoring:</strong> adjacent live degree-3 atoms score $\\upsilon=0.35$; a degree-$\\ge4$ atom costs $0.30$; everything else scores zero. These are <em>not</em> the exponents of Propositions 3.2–3.4 — they encode only the ordering "{33} good, {4} bad". Try the last gallery entry: no cutting sequence clears the target, which is exactly the gap that long bonds fill (<a href="../lectures/12-torus-and-long-bonds.md">Lecture 12</a>).');
+});
+</script>
+</body>
+</html>

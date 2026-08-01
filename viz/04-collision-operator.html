@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The collision operator</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid two">
+    <div class="panel">
+      <h2>Collision sphere: drag $v$ and $v_1$</h2>
+      <canvas id="cv"></canvas>
+      <div class="note">
+        As $\omega$ sweeps $\mathbb{S}^{1}$, the outgoing pair $(v',v_1')$ traces the circle of centre
+        $\tfrac12(v+v_1)$ and radius $\tfrac12|v-v_1|$ — the locus forced by conservation of momentum
+        <em>and</em> energy. Shading gives the kernel $((v-v_1)\cdot\omega)_+$: zero on the receding half.
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Space-homogeneous relaxation $\dot n=\alpha\,\mathcal{Q}(n,n)$</h2>
+      <canvas id="cr"></canvas>
+      <div class="controls" id="ctl"></div>
+    </div>
+  </div>
+  <div class="grid two" style="margin-top:1rem">
+    <div class="panel"><h2>Conserved / decaying</h2><div id="ro"></div></div>
+    <div class="panel">
+      <h2>Definition 1.4</h2>
+      <p style="font-size:.86rem">
+        $(\partial_t+v\cdot\nabla_x)n=\alpha\displaystyle\int_{\mathbb{R}^d}\int_{\mathbb{S}^{d-1}}((v-v_1)\cdot\omega)_+\,(n'n_1'-nn_1)\,d\omega\,dv_1$
+        with $v'=v-((v-v_1)\cdot\omega)\omega$, $v_1'=v_1+((v-v_1)\cdot\omega)\omega$ — the same map as the
+        microscopic bounce of Definition 1.1.
+      </p>
+    </div>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, button, readout, fitCanvas, cssVar, loop, gaussian, mulberry32 } = window.H6;
+  head({
+    title: 'The collision operator',
+    maps: '[H6] §1.2.3, Definition 1.4',
+    lecture: '04-boltzmann-equation.md',
+    prev: '03-ensemble-marginals.html', next: '05-chaos-cumulants.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1.05);
+  const cr = fitCanvas(document.getElementById('cr'), 1.35);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+
+  /* ---------------- panel A: the collision sphere ---------------- */
+  let v = [0.9, -0.35], v1 = [-0.7, 0.5], omegaAngle = 0.7, dragging = null;
+
+  function toPix(p) { const S = Math.min(ctx.W, ctx.H); return [ctx.W / 2 + p[0] * S * 0.3, ctx.H / 2 - p[1] * S * 0.3]; }
+  function fromPix(px, py) { const S = Math.min(ctx.W, ctx.H); return [(px - ctx.W / 2) / (S * 0.3), -(py - ctx.H / 2) / (S * 0.3)]; }
+
+  function outgoing(om) {
+    const dvx = v[0] - v1[0], dvy = v[1] - v1[1];
+    const dot = dvx * om[0] + dvy * om[1];
+    return {
+      dot,
+      vp: [v[0] - dot * om[0], v[1] - dot * om[1]],
+      v1p: [v1[0] + dot * om[0], v1[1] + dot * om[1]],
+    };
+  }
+
+  function drawSphere() {
+    const W = ctx.W, H = ctx.H, S = Math.min(W, H);
+    ctx.clearRect(0, 0, W, H);
+    const mid = [(v[0] + v1[0]) / 2, (v[1] + v1[1]) / 2];
+    const rad = Math.hypot(v[0] - v1[0], v[1] - v1[1]) / 2;
+    const [mx, my] = toPix(mid), Rp = rad * S * 0.3;
+
+    // axes
+    ctx.strokeStyle = cssVar('--line'); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2);
+    ctx.moveTo(W / 2, 0); ctx.lineTo(W / 2, H); ctx.stroke();
+
+    // kernel shading around the collision circle
+    for (let k = 0; k < 180; k++) {
+      const a = k / 180 * 2 * Math.PI;
+      const om = [Math.cos(a), Math.sin(a)];
+      const { dot } = outgoing(om);
+      const w = Math.max(0, -dot);            // ((v - v1)·ω)_+ with ω pointing i→j convention
+      ctx.strokeStyle = `rgba(110,168,255,${0.08 + 0.55 * w / (2 * rad + 1e-9)})`;
+      ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.arc(mx, my, Rp, a, a + 2 * Math.PI / 180); ctx.stroke();
+    }
+    ctx.strokeStyle = cssVar('--line'); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(mx, my, Rp, 0, 7); ctx.stroke();
+
+    const om = [Math.cos(omegaAngle), Math.sin(omegaAngle)];
+    const { vp, v1p, dot } = outgoing(om);
+
+    const arrow = (from, to, col, lab) => {
+      const [x0, y0] = toPix(from), [x1, y1] = toPix(to);
+      ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      const a = Math.atan2(y1 - y0, x1 - x0);
+      ctx.beginPath(); ctx.moveTo(x1, y1);
+      ctx.lineTo(x1 - 8 * Math.cos(a - .4), y1 - 8 * Math.sin(a - .4));
+      ctx.lineTo(x1 - 8 * Math.cos(a + .4), y1 - 8 * Math.sin(a + .4));
+      ctx.closePath(); ctx.fill();
+      ctx.font = '11px ui-monospace, monospace';
+      ctx.fillText(lab, x1 + 8, y1 - 6);
+    };
+    arrow([0, 0], v, cssVar('--ink-dim'), 'v');
+    arrow([0, 0], v1, cssVar('--ink-dim'), 'v₁');
+    arrow([0, 0], vp, cssVar('--good'), "v'");
+    arrow([0, 0], v1p, cssVar('--good'), "v₁'");
+    // omega
+    const oTip = [mid[0] + om[0] * rad, mid[1] + om[1] * rad];
+    arrow(mid, oTip, cssVar('--gold'), 'ω');
+
+    ctx.fillStyle = cssVar('--ink-dim'); ctx.font = '11px ui-monospace, monospace';
+    ctx.fillText('drag the grey arrowheads; scroll to rotate ω', 10, H - 10);
+    return { dot, vp, v1p };
+  }
+
+  const cvEl = document.getElementById('cv');
+  cvEl.addEventListener('pointerdown', e => {
+    const r = cvEl.getBoundingClientRect();
+    const p = fromPix(e.clientX - r.left, e.clientY - r.top);
+    const d0 = Math.hypot(p[0] - v[0], p[1] - v[1]);
+    const d1 = Math.hypot(p[0] - v1[0], p[1] - v1[1]);
+    dragging = (d0 < d1 && d0 < .35) ? 'v' : (d1 < .35 ? 'v1' : null);
+  });
+  cvEl.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    const r = cvEl.getBoundingClientRect();
+    const p = fromPix(e.clientX - r.left, e.clientY - r.top);
+    if (dragging === 'v') v = p; else v1 = p;
+  });
+  window.addEventListener('pointerup', () => { dragging = null; });
+  cvEl.addEventListener('wheel', e => { e.preventDefault(); omegaAngle += e.deltaY * 0.002; }, { passive: false });
+
+  /* ---------------- panel B: relaxation and H(t) ---------------- */
+  const M = 64;                     // velocity samples (particle-like Monte Carlo of Q)
+  let alpha = 4, parts = null, Hs = [], simT = 0;
+  const rng = mulberry32(9);
+
+  function resetGas(kind) {
+    parts = [];
+    for (let i = 0; i < 900; i++) {
+      if (kind === 'bimodal') {
+        const s = rng() < .5 ? 1 : -1;
+        parts.push([s * 0.9 + 0.12 * gaussian(rng), 0.12 * gaussian(rng)]);
+      } else if (kind === 'ring') {
+        const a = rng() * 2 * Math.PI;
+        parts.push([Math.cos(a), Math.sin(a)]);
+      } else {
+        parts.push([gaussian(rng) * 0.5, gaussian(rng) * 0.5]);
+      }
+    }
+    Hs = []; simT = 0;
+  }
+  resetGas('bimodal');
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('α', { min: 0.5, max: 12, step: 0.5, value: alpha, fmt: v => v.toFixed(1) },
+    v => { alpha = v; }).wrap);
+  ctl.append(button('bimodal', () => resetGas('bimodal')));
+  ctl.append(button('ring', () => resetGas('ring')));
+  ctl.append(button('Maxwellian', () => resetGas('gauss')));
+
+  /** One Monte-Carlo step of the homogeneous Boltzmann collision operator:
+      pick random pairs, accept with probability ∝ |v−v₁| (hard spheres),
+      pick ω uniformly, apply the exact collision map. */
+  function collideStep(dt) {
+    const n = parts.length;
+    const trials = Math.max(1, Math.round(alpha * dt * n * 0.9));
+    for (let k = 0; k < trials; k++) {
+      const i = (rng() * n) | 0, j = (rng() * n) | 0;
+      if (i === j) continue;
+      const dvx = parts[i][0] - parts[j][0], dvy = parts[i][1] - parts[j][1];
+      const rel = Math.hypot(dvx, dvy);
+      if (rng() > rel / 3) continue;                      // ∝ relative speed
+      const a = rng() * 2 * Math.PI;
+      const ox = Math.cos(a), oy = Math.sin(a);
+      const dot = dvx * ox + dvy * oy;
+      if (dot >= 0) continue;                             // approaching pairs only
+      parts[i][0] -= dot * ox; parts[i][1] -= dot * oy;
+      parts[j][0] += dot * ox; parts[j][1] += dot * oy;
+    }
+    simT += dt;
+  }
+
+  function entropy() {
+    // H = ∫ n log n over a coarse velocity histogram
+    const B = 28, L = 2.2, h = new Float64Array(B * B);
+    for (const p of parts) {
+      const a = Math.floor((p[0] + L) / (2 * L) * B), b = Math.floor((p[1] + L) / (2 * L) * B);
+      if (a >= 0 && a < B && b >= 0 && b < B) h[a * B + b]++;
+    }
+    const cell = (2 * L / B) ** 2, N = parts.length;
+    let H = 0;
+    for (let k = 0; k < h.length; k++) {
+      if (h[k] === 0) continue;
+      const f = h[k] / (N * cell);
+      H += f * Math.log(f) * cell;
+    }
+    return H;
+  }
+
+  function drawRelax() {
+    const W = cr.W, H = cr.H;
+    cr.clearRect(0, 0, W, H);
+    const half = H * 0.58;
+    // velocity scatter
+    const S = Math.min(W, half);
+    cr.save(); cr.translate(W / 2, half / 2);
+    cr.fillStyle = cssVar('--accent') + '99';
+    for (const p of parts) {
+      cr.fillRect(p[0] * S * 0.2 - 1, -p[1] * S * 0.2 - 1, 2, 2);
+    }
+    cr.strokeStyle = cssVar('--line');
+    cr.beginPath(); cr.arc(0, 0, S * 0.2, 0, 7); cr.stroke();
+    cr.restore();
+    cr.fillStyle = cssVar('--ink-dim'); cr.font = '10px ui-monospace, monospace';
+    cr.fillText('velocity distribution', 8, 14);
+
+    // H(t)
+    const top = half + 12, hh = H - top - 20, pad = 34;
+    if (Hs.length > 1) {
+      const lo = Math.min(...Hs), hi = Math.max(...Hs);
+      const Y = v => top + hh - ((v - lo) / (hi - lo + 1e-9)) * hh;
+      cr.strokeStyle = cssVar('--good'); cr.lineWidth = 2; cr.beginPath();
+      Hs.forEach((v, k) => {
+        const x = pad + k / Math.max(1, Hs.length - 1) * (W - pad - 12);
+        k ? cr.lineTo(x, Y(v)) : cr.moveTo(x, Y(v));
+      });
+      cr.stroke();
+    }
+    cr.strokeStyle = cssVar('--line');
+    cr.beginPath(); cr.moveTo(pad, top); cr.lineTo(pad, top + hh); cr.lineTo(W - 12, top + hh); cr.stroke();
+    cr.fillStyle = cssVar('--ink-dim');
+    cr.fillText('H(t) = ∫ n log n   (must be non-increasing)', pad + 4, top + 12);
+  }
+
+  loop(dt => {
+    collideStep(Math.min(dt, 0.033));
+    if (Hs.length < 600) Hs.push(entropy());
+    const s = drawSphere();
+    drawRelax();
+
+    let px = 0, py = 0, e = 0;
+    for (const p of parts) { px += p[0]; py += p[1]; e += p[0] ** 2 + p[1] ** 2; }
+    const n = parts.length;
+    const H0 = Hs[0] ?? 0, Hn = Hs[Hs.length - 1] ?? 0;
+    ro.set([
+      ['v + v₁', `(${(v[0] + v1[0]).toFixed(3)}, ${(v[1] + v1[1]).toFixed(3)})`],
+      ["v' + v₁'", `(${(s.vp[0] + s.v1p[0]).toFixed(3)}, ${(s.vp[1] + s.v1p[1]).toFixed(3)})`, 'hi'],
+      ['|v|²+|v₁|²', (v[0] ** 2 + v[1] ** 2 + v1[0] ** 2 + v1[1] ** 2).toFixed(4)],
+      ["|v'|²+|v₁'|²", (s.vp[0] ** 2 + s.vp[1] ** 2 + s.v1p[0] ** 2 + s.v1p[1] ** 2).toFixed(4), 'hi'],
+      ['kernel ((v−v₁)·ω)₊', Math.max(0, -s.dot).toFixed(4)],
+      ['— gas —', ''],
+      ['Σv / N', `(${(px / n).toFixed(4)}, ${(py / n).toFixed(4)})`, 'hi'],
+      ['Σ|v|² / N', (e / n).toFixed(4), 'hi'],
+      ['H(t) − H(0)', (Hn - H0).toFixed(4), (Hn - H0) <= 1e-6 ? 'hi' : 'lo'],
+    ]);
+  });
+
+  foot('The relaxation panel is a Monte-Carlo (Bird-type) realisation of the homogeneous collision operator, not a spectral solver: momentum and energy are conserved exactly by the collision map, while H is estimated from a coarse histogram and therefore wobbles at the level of binning noise.');
+});
+</script>
+</body>
+</html>

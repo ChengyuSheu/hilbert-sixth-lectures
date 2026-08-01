@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Molecule explorer</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid two">
+    <div class="panel">
+      <h2>Collision history (click two lines to add a collision)</h2>
+      <canvas id="cv"></canvas>
+      <div class="controls" id="ctl"></div>
+    </div>
+    <div class="panel">
+      <h2>The molecule $\mathbb{M}$</h2>
+      <canvas id="cm"></canvas>
+      <div style="margin-top:.6rem">
+        <span class="tag">deg 2</span>
+        <span class="tag good">deg 3 · {33} pair</span>
+        <span class="tag bad">deg ≥ 4</span>
+        <span class="tag gold">long bond</span>
+      </div>
+    </div>
+  </div>
+  <div class="grid two" style="margin-top:1rem">
+    <div class="panel"><h2>Graph invariants</h2><div id="ro"></div></div>
+    <div class="panel">
+      <h2>The identification that makes it all work</h2>
+      <p style="font-size:.87rem">
+        <strong>Recollisions = independent cycles.</strong> A collision history with no recollisions is a
+        <em>tree</em>; every time two particles that already share history meet again, an edge closes a loop.
+        So $\rho = E - V + c$, the circuit rank, <em>counts recollisions</em> — and the analytic question
+        "how small is this term" becomes the graph-theoretic question "how much can be extracted from a
+        graph of circuit rank $\rho$". Build a history and watch $\rho$ increment.
+      </p>
+    </div>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, button, readout, fitCanvas, cssVar, Molecule } = window.H6;
+  head({
+    title: 'Molecule explorer',
+    maps: '[H6] §2.1 “Molecules and associated notions”; definitions from [LT]',
+    lecture: '09-molecules.md',
+    prev: '08-cumulant-layers.html', next: '10-cutting-sandbox.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1.1);
+  const cm = fitCanvas(document.getElementById('cm'), 1.1);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+
+  /* model: nLines particle lines; events = [{t, a, b}] collisions between lines a and b */
+  // open on a non-trivial history so the molecule panel is meaningful immediately
+  let nLines = 3, events = [{ t: .2, a: 0, b: 1 }, { t: .45, a: 1, b: 2 }, { t: .7, a: 0, b: 2 }];
+  let longThresh = 0.25, tau = 0.5, pending = null;
+
+  const PRESETS = {
+    'pure tree': { lines: 4, ev: [{ t: .25, a: 0, b: 1 }, { t: .5, a: 1, b: 2 }, { t: .75, a: 2, b: 3 }] },
+    'one recollision': { lines: 3, ev: [{ t: .2, a: 0, b: 1 }, { t: .45, a: 1, b: 2 }, { t: .7, a: 0, b: 2 }] },
+    'double collision (torus only)': { lines: 2, ev: [{ t: .3, a: 0, b: 1 }, { t: .8, a: 0, b: 1 }] },
+    'high-ρ tangle': {
+      lines: 4, ev: [{ t: .15, a: 0, b: 1 }, { t: .3, a: 2, b: 3 }, { t: .45, a: 1, b: 2 },
+                     { t: .6, a: 0, b: 3 }, { t: .75, a: 0, b: 2 }, { t: .9, a: 1, b: 3 }],
+    },
+  };
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('particle lines', { min: 2, max: 7, step: 1, value: nLines },
+    v => { nLines = v | 0; events = events.filter(e => e.a < nLines && e.b < nLines); redraw(); }).wrap);
+  ctl.append(slider('long-bond threshold', { min: 0.05, max: 0.6, step: 0.01, value: longThresh, fmt: v => v.toFixed(2) },
+    v => { longThresh = v; redraw(); }).wrap);
+  ctl.append(slider('layer width τ', { min: 0.15, max: 1, step: 0.05, value: tau, fmt: v => v.toFixed(2) },
+    v => { tau = v; redraw(); }).wrap);
+  ctl.append(button('undo', () => { events.pop(); redraw(); }));
+  ctl.append(button('clear', () => { events = []; pending = null; redraw(); }));
+  Object.keys(PRESETS).forEach(k => ctl.append(button(k, () => {
+    nLines = PRESETS[k].lines; events = PRESETS[k].ev.map(e => ({ ...e })); pending = null; redraw();
+  })));
+
+  /* ---- build the molecule from the history ---- */
+  function buildMolecule() {
+    const mol = new Molecule();
+    const sorted = [...events].sort((p, q) => p.t - q.t);
+    const last = new Map();                   // line -> last atom id
+    sorted.forEach(ev => {
+      const a = mol.addAtom({ t: ev.t, kind: 'C' });
+      for (const li of [ev.a, ev.b]) {
+        if (last.has(li)) mol.addBond(last.get(li), a.id, { line: li });
+        else a.freeEnds = (a.freeEnds || 0) + 1;      // dangling bottom end
+        last.set(li, a.id);
+      }
+      // each atom also has a top end for each of its two lines until superseded
+    });
+    // add a free end for every line that is still open at the top
+    last.forEach((atomId) => { mol.atoms[atomId].freeEnds = (mol.atoms[atomId].freeEnds || 0) + 1; });
+    return { mol, sorted };
+  }
+
+  /* ---- panels ---- */
+  const CVEL = document.getElementById('cv');
+  CVEL.addEventListener('click', e => {
+    const r = CVEL.getBoundingClientRect();
+    const pad = 30;
+    const w = r.width - 2 * pad, h = r.height - 2 * pad;
+    const li = Math.round(((e.clientX - r.left - pad) / w) * (nLines - 1));
+    const t = 1 - (e.clientY - r.top - pad) / h;
+    if (li < 0 || li >= nLines || t < 0.02 || t > 0.98) return;
+    if (pending === null) { pending = { li, t }; }
+    else if (pending.li !== li) {
+      events.push({ t: (pending.t + t) / 2, a: Math.min(pending.li, li), b: Math.max(pending.li, li) });
+      pending = null;
+    } else pending = null;
+    redraw();
+  });
+
+  function redraw() {
+    const { mol, sorted } = buildMolecule();
+
+    // ---- history panel ----
+    const W = ctx.W, H = ctx.H, pad = 30;
+    ctx.clearRect(0, 0, W, H);
+    const X = li => pad + (nLines === 1 ? 0.5 : li / (nLines - 1)) * (W - 2 * pad);
+    const Y = t => H - pad - t * (H - 2 * pad);
+    // layer bands
+    for (let b = 0; b * tau < 1; b++) {
+      if (b % 2 === 0) continue;
+      ctx.fillStyle = cssVar('--line') + '55';
+      ctx.fillRect(pad, Y(Math.min(1, (b + 1) * tau)), W - 2 * pad, Y(b * tau) - Y(Math.min(1, (b + 1) * tau)));
+    }
+    ctx.strokeStyle = cssVar('--line'); ctx.strokeRect(pad, pad, W - 2 * pad, H - 2 * pad);
+    for (let li = 0; li < nLines; li++) {
+      ctx.strokeStyle = cssVar('--accent'); ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(X(li), Y(0)); ctx.lineTo(X(li), Y(1)); ctx.stroke();
+      ctx.fillStyle = cssVar('--ink-dim'); ctx.font = '10px ui-monospace, monospace'; ctx.textAlign = 'center';
+      ctx.fillText('p' + li, X(li), H - pad + 14);
+    }
+    const pairSeen = new Map();
+    sorted.forEach((ev, k) => {
+      const key = ev.a + ',' + ev.b;
+      const rep = pairSeen.get(key) || 0; pairSeen.set(key, rep + 1);
+      ctx.strokeStyle = rep ? cssVar('--bad') : cssVar('--good'); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(X(ev.a), Y(ev.t)); ctx.lineTo(X(ev.b), Y(ev.t)); ctx.stroke();
+      ctx.fillStyle = rep ? cssVar('--bad') : cssVar('--good');
+      [ev.a, ev.b].forEach(li => { ctx.beginPath(); ctx.arc(X(li), Y(ev.t), 4, 0, 7); ctx.fill(); });
+      ctx.fillStyle = cssVar('--ink-dim'); ctx.font = '9px ui-monospace, monospace'; ctx.textAlign = 'left';
+      ctx.fillText('𝔫' + k + (rep ? ' (recollision)' : ''), Math.min(X(ev.a), X(ev.b)) + 6, Y(ev.t) - 6);
+    });
+    if (pending) {
+      ctx.fillStyle = cssVar('--gold');
+      ctx.beginPath(); ctx.arc(X(pending.li), Y(pending.t), 5, 0, 7); ctx.fill();
+      ctx.fillText('pick a second line…', X(pending.li) + 8, Y(pending.t) - 8);
+    }
+
+    // ---- molecule panel ----
+    const W2 = cm.W, H2 = cm.H, p2 = 34;
+    cm.clearRect(0, 0, W2, H2);
+    const n = mol.atoms.length;
+    const P = mol.atoms.map((a, k) => [
+      p2 + (n === 1 ? .5 : k / (n - 1)) * (W2 - 2 * p2),
+      H2 - p2 - a.t * (H2 - 2 * p2),
+    ]);
+    const longs = new Set(mol.longBonds(longThresh).map(b => b.id));
+    const good = new Set(mol.goodPairs().map(b => b.id));
+    mol.bonds.forEach(b => {
+      cm.strokeStyle = longs.has(b.id) ? cssVar('--gold')
+                     : good.has(b.id) ? cssVar('--good') : cssVar('--line');
+      cm.lineWidth = longs.has(b.id) ? 3.5 : good.has(b.id) ? 2.5 : 1.2;
+      cm.beginPath(); cm.moveTo(P[b.i][0], P[b.i][1]); cm.lineTo(P[b.j][0], P[b.j][1]); cm.stroke();
+    });
+    mol.atoms.forEach((a, k) => {
+      const d = mol.degree(a.id);
+      cm.fillStyle = d >= 4 ? cssVar('--bad') : d === 3 ? cssVar('--good') : cssVar('--accent');
+      cm.beginPath(); cm.arc(P[k][0], P[k][1], 10, 0, 7); cm.fill();
+      cm.fillStyle = cssVar('--bg'); cm.font = '600 10px ui-monospace, monospace'; cm.textAlign = 'center';
+      cm.fillText(String(d), P[k][0], P[k][1] + 3.5);
+      cm.fillStyle = cssVar('--ink-dim'); cm.font = '9px ui-monospace, monospace';
+      cm.fillText('𝔫' + k, P[k][0], P[k][1] - 15);
+    });
+    if (!n) {
+      cm.fillStyle = cssVar('--ink-dim'); cm.textAlign = 'center'; cm.font = '12px system-ui';
+      cm.fillText('add a collision on the left', W2 / 2, H2 / 2);
+    }
+
+    const rho = mol.circuitRank();
+    const c = mol.components();
+    ro.set([
+      ['atoms V', mol.atoms.length],
+      ['bonds E', mol.bonds.length],
+      ['components c', c.count],
+      ['circuit rank ρ = E−V+c', rho, rho ? 'lo' : 'hi'],
+      ['recollisions observed', [...pairSeen.values()].reduce((s, v) => s + Math.max(0, v - 1), 0), 'lo'],
+      ['— scoring —', ''],
+      ['{33} good pairs', good.size, good.size ? 'hi' : ''],
+      ['deg ≥ 4 atoms', mol.degree4().length, mol.degree4().length ? 'lo' : 'hi'],
+      ['long bonds', longs.size, longs.size ? 'hi' : ''],
+      ['target #{33} ≳ ρ', good.size >= rho ? 'met' : 'NOT met', good.size >= rho ? 'hi' : 'lo'],
+    ]);
+  }
+
+  redraw();
+  window.addEventListener('resize', redraw);
+  foot('The explorer enforces graph consistency but does <strong>not</strong> check physical realizability — many drawable molecules correspond to no hard-sphere trajectory, and deciding which is exactly what the geometric estimates do. The {2}/{3}/{4}/{33} classification here is the scoring intuition of <a href="../lectures/09-molecules.md">Lecture 09</a> §4, not the full definitions in [LT].');
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Hilbert expansion and compressible Euler</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid two">
+    <div class="panel">
+      <h2>1D compressible Euler — characteristics and shock formation</h2>
+      <canvas id="cv"></canvas>
+      <div class="controls" id="ctl"></div>
+    </div>
+    <div class="panel">
+      <h2>Expansion residual by order</h2>
+      <canvas id="cr"></canvas>
+      <div class="note">
+        Each order divides the residual by $\delta$. [H6] carries the expansion to $F_6$ because the
+        truncation error must survive being fed through the error terms of Theorem 1. Every $F_n$ involves
+        derivatives of the fluid fields — which is exactly why the whole construction dies at a shock.
+      </div>
+    </div>
+  </div>
+  <div class="grid two" style="margin-top:1rem">
+    <div class="panel"><h2>Readout</h2><div id="ro"></div></div>
+    <div class="panel">
+      <h2>Theorem 3</h2>
+      <p style="font-size:.86rem">
+        $\partial_t\rho+\nabla\cdot(\rho u)=0$; &nbsp;
+        $\partial_t(\rho u)+\nabla\cdot(\rho u\otimes u)+\nabla p=0$; &nbsp;
+        $\partial_t[\rho\frac{dT+|u|^2}{2}]+\nabla\cdot[\rho u\frac{dT+|u|^2}{2}]+\nabla\cdot(pu)=0$; &nbsp;
+        $p=\rho T$.
+      </p>
+      <p style="font-size:.86rem">
+        The ideal gas law is <strong>derived</strong>: for a local Maxwellian,
+        $\int(v-u)\otimes(v-u)\,\mathfrak{M}\,dv=\rho T\,\mathrm{Id}$ automatically. Hard spheres are
+        monatomic, so the specific heat is $d/2$ and $\gamma=(d+2)/d$ — in $d=3$, exactly $5/3$.
+      </p>
+    </div>
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, slider, button, readout, fitCanvas, cssVar, loop } = window.H6;
+  head({
+    title: 'The Hilbert expansion and compressible Euler',
+    maps: '[H6] §1.3.2, Theorem 3 (compressible Euler limit)',
+    lecture: '15-compressible-euler.md',
+    prev: '14-hydrodynamic-limit.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1.35);
+  const cr = fitCanvas(document.getElementById('cr'), 1.35);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+
+  let order = 3, delta = 0.35, dim = 3, t = 0, running = true, amp = 0.35;
+
+  const ctl = document.getElementById('ctl');
+  ctl.append(slider('truncation order k', { min: 0, max: 6, step: 1, value: order }, v => { order = v | 0; }).wrap);
+  ctl.append(slider('δ', { min: 0.05, max: 0.8, step: 0.01, value: delta, fmt: v => v.toFixed(2) }, v => { delta = v; }).wrap);
+  ctl.append(slider('initial amplitude', { min: 0.05, max: 0.6, step: 0.01, value: amp, fmt: v => v.toFixed(2) },
+    v => { amp = v; t = 0; }).wrap);
+  ctl.append(slider('d', { min: 2, max: 3, step: 1, value: dim }, v => { dim = v | 0; }).wrap);
+  ctl.append(button('pause / run', () => { running = !running; }));
+  ctl.append(button('restart', () => { t = 0; }));
+
+  /* A Burgers-type surrogate for the characteristic geometry of 1D Euler:
+     u0(x) = amp*sin(2πx), characteristics x + u0(x) t.  Shocks form at
+     t* = 1 / max|u0'| = 1/(2π·amp).  This is a caricature of the Euler
+     characteristic field, chosen because it has the same failure mechanism. */
+  const tStar = () => 1 / (2 * Math.PI * amp);
+
+  function drawChar() {
+    const W = ctx.W, H = ctx.H, pad = 34;
+    ctx.clearRect(0, 0, W, H);
+    const line = cssVar('--line'), acc = cssVar('--accent'), bad = cssVar('--bad'), dimc = cssVar('--ink-dim');
+    const TMAX = Math.max(0.8, tStar() * 1.7);
+    const X = x => pad + x * (W - 2 * pad);
+    const Y = tt => H - pad - (tt / TMAX) * (H - 2 * pad);
+
+    ctx.strokeStyle = line; ctx.strokeRect(pad, pad, W - 2 * pad, H - 2 * pad);
+    for (let k = 0; k <= 40; k++) {
+      const x0 = k / 40;
+      const u0 = amp * Math.sin(2 * Math.PI * x0);
+      ctx.strokeStyle = acc + '77'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let m = 0; m <= 20; m++) {
+        const tt = TMAX * m / 20;
+        const x = ((x0 + u0 * tt) % 1 + 1) % 1;
+        if (m === 0) ctx.moveTo(X(x), Y(tt));
+        else {
+          const prev = ((x0 + u0 * (TMAX * (m - 1) / 20)) % 1 + 1) % 1;
+          if (Math.abs(x - prev) > 0.5) ctx.moveTo(X(x), Y(tt)); else ctx.lineTo(X(x), Y(tt));
+        }
+      }
+      ctx.stroke();
+    }
+    // shock time
+    ctx.strokeStyle = bad; ctx.lineWidth = 2; ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(pad, Y(tStar())); ctx.lineTo(W - pad, Y(tStar())); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = bad; ctx.font = '11px ui-monospace, monospace';
+    ctx.fillText('t* — characteristics cross, expansion dies', pad + 6, Y(tStar()) - 6);
+    // current time
+    ctx.strokeStyle = cssVar('--good'); ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(pad, Y(Math.min(t, TMAX))); ctx.lineTo(W - pad, Y(Math.min(t, TMAX))); ctx.stroke();
+    ctx.fillStyle = dimc; ctx.fillText('x', W - pad - 10, H - pad + 16);
+    ctx.fillText('t', pad - 14, pad + 10);
+  }
+
+  function drawResidual() {
+    const W = cr.W, H = cr.H, pad = 40;
+    cr.clearRect(0, 0, W, H);
+    const dimc = cssVar('--ink-dim'), good = cssVar('--good'), bad = cssVar('--bad');
+    // residual after truncating at order k: ~ delta^{k+1} / (1 - t/t*)^{k+1}
+    const blow = Math.max(1e-3, 1 - t / tStar());
+    const vals = [];
+    for (let k = 0; k <= 6; k++) vals.push(Math.pow(delta / blow, k + 1));
+    const hi = Math.max(...vals, 1);
+    const bw = (W - 2 * pad) / 7;
+    vals.forEach((v, k) => {
+      const h = Math.min(1, Math.log10(v * 1e6 + 1) / Math.log10(hi * 1e6 + 1)) * (H - 2 * pad);
+      cr.fillStyle = (k === order ? (v < 1 ? good : bad) : cssVar('--accent') + '66');
+      cr.fillRect(pad + k * bw + 3, H - pad - h, bw - 6, h);
+      cr.fillStyle = dimc; cr.font = '10px ui-monospace, monospace'; cr.textAlign = 'center';
+      cr.fillText('F' + k, pad + k * bw + bw / 2, H - pad + 14);
+    });
+    cr.textAlign = 'left';
+    cr.strokeStyle = cssVar('--line');
+    cr.beginPath(); cr.moveTo(pad, H - pad); cr.lineTo(W - pad, H - pad); cr.stroke();
+    cr.fillStyle = dimc;
+    cr.fillText('residual after truncating at order k (log scale)', pad, pad - 6);
+  }
+
+  loop(dt => {
+    if (running) t += dt * 0.12;
+    if (t > tStar() * 1.6) t = 0;
+    drawChar(); drawResidual();
+    const blow = Math.max(1e-3, 1 - t / tStar());
+    const res = Math.pow(delta / blow, order + 1);
+    const gamma = (dim + 2) / dim;
+    ro.set([
+      ['d', dim],
+      ['γ = (d+2)/d', gamma.toFixed(4), 'hi'],
+      ['specific heat  d/2', (dim / 2).toFixed(1)],
+      ['equation of state', 'p = ρT  (derived)', 'hi'],
+      ['— expansion —', ''],
+      ['truncation order k', order],
+      ['δ', delta.toFixed(2)],
+      ['residual ≈ (δ/(1−t/t*))^{k+1}', res < 1e-4 ? res.toExponential(2) : res.toFixed(5), res < 1 ? 'hi' : 'lo'],
+      ['— time —', ''],
+      ['t', t.toFixed(3)],
+      ['shock time t*', tStar().toFixed(3)],
+      ['t / t*', (t / tStar()).toFixed(3), t < tStar() ? 'hi' : 'lo'],
+      ['status', t < tStar() ? 'smooth — Theorem 3 applies' : 'PAST SHOCK — nothing claimed',
+        t < tStar() ? 'hi' : 'lo'],
+    ]);
+  });
+
+  foot('The characteristic field is a Burgers surrogate for 1D Euler: it is not the Euler system, but it fails the same way and at the same kind of time. The residual model $(\\delta/(1-t/t^*))^{k+1}$ is a caricature capturing two true facts — each order gains a $\\delta$, and every order differentiates the fluid fields, so all orders blow up together at $t^*$.');
+});
+</script>
+</body>
+</html>

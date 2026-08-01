@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The new cutting algorithm</title>
+<link rel="stylesheet" href="../assets/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="../assets/viz.js"></script>
+</head>
+<body>
+<main>
+  <div class="grid side">
+    <div class="panel">
+      <h2>Molecule, with long bonds in gold</h2>
+      <canvas id="cv"></canvas>
+      <div class="controls" id="ctl"></div>
+    </div>
+    <div>
+      <div class="panel"><h2>Loop state</h2><div id="steps"></div></div>
+      <div class="panel" style="margin-top:1rem"><h2>Deferred obligations</h2><div id="stack" style="font-family:var(--mono);font-size:.78rem"></div></div>
+    </div>
+  </div>
+  <div class="grid two" style="margin-top:1rem">
+    <div class="panel">
+      <h2>Ledger: raw gain vs net after servicing obligations</h2>
+      <canvas id="cl"></canvas>
+    </div>
+    <div class="panel"><h2>Readout</h2><div id="ro"></div></div>
+  </div>
+  <div class="note">
+    <strong>The amortization framing is this repository's gloss, not the paper's language.</strong>
+    [H6] §1.4.2 says: isolate one bad $\{3A\}$-molecule with a long bond per iteration, cut at the long bond,
+    and <em>defer the new obligation to the next iteration</em>. Modelling that as a potential function which
+    must stay non-negative is a helpful way to see why deferral works — see
+    <a href="../lectures/13-the-new-algorithm.md">Lecture 13</a> §7.
+  </div>
+</main>
+<script>
+window.addEventListener('DOMContentLoaded', function () {
+  const { head, foot, button, toggle, readout, fitCanvas, cssVar, Molecule } = window.H6;
+  head({
+    title: 'The new cutting algorithm',
+    maps: '[H6] §1.4.2; §4.1 general case, §4.2 special case (proof of Proposition 3.8)',
+    lecture: '13-the-new-algorithm.md',
+    prev: '12-torus-recollisions.html', next: '14-hydrodynamic-limit.html',
+  });
+
+  const ctx = fitCanvas(document.getElementById('cv'), 1.25);
+  const cl = fitCanvas(document.getElementById('cl'), 2.0);
+  const ro = readout([]); document.getElementById('ro').append(ro.node);
+  const stepsEl = document.getElementById('steps');
+  const stackEl = document.getElementById('stack');
+
+  const LONG = 1.0, GOOD = 0.35, OBLIG = 0.45, PEN = 0.30, THRESH = 0.28;
+
+  const PRESETS = {
+    'general case': {
+      t: [.05, .10, .16, .55, .60, .66, .95],
+      e: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [0, 2], [3, 5], [1, 4]],
+    },
+    'two long bonds': {
+      t: [.05, .12, .50, .58, .95, .99],
+      e: [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [0, 3], [1, 5], [2, 4]],
+    },
+    'special case (general recursion stalls)': {
+      t: [.40, .44, .48, .52, .56],
+      e: [[0, 1], [1, 2], [2, 3], [3, 4], [0, 2], [1, 3], [2, 4], [0, 4]],
+    },
+  };
+
+  const STEPS = ['inspect', 'detect long bond', 'locate {3A}', 'cut', 'bank gain', 'defer obligation', 'recurse'];
+
+  let name = 'general case';
+  let mol, removed, deferred, ledger, phase, iter, classicalOnly = false, immediate = false, stalled = false;
+
+  function load(k) {
+    name = k;
+    const g = PRESETS[k];
+    mol = new Molecule();
+    g.t.forEach(t => mol.addAtom({ t }));
+    g.e.forEach(([a, b]) => mol.addBond(a, b));
+    removed = new Set(); deferred = []; ledger = []; phase = 0; iter = 0; stalled = false;
+    draw();
+  }
+
+  const ctl = document.getElementById('ctl');
+  Object.keys(PRESETS).forEach(k => ctl.append(button(k, () => load(k))));
+  ctl.append(button('▶ step', step));
+  ctl.append(button('run to end', () => { let g = 0; while (!done() && !stalled && g++ < 60) step(); }));
+  ctl.append(button('reset', () => load(name)));
+  ctl.append(toggle('classical only (no long bonds)', false, v => { classicalOnly = v; load(name); }).wrap);
+  ctl.append(toggle('pay obligations immediately', false, v => { immediate = v; load(name); }).wrap);
+
+  const done = () => removed.size >= mol.atoms.length;
+  const live = id => !removed.has(id);
+  function liveDeg(id) {
+    let d = 0;
+    for (const b of mol.bonds) {
+      if (b.i === id && live(b.j)) d++;
+      if (b.j === id && live(b.i)) d++;
+    }
+    return d;
+  }
+  function findLongBond() {
+    if (classicalOnly) return null;
+    for (const b of mol.bonds) {
+      if (!live(b.i) || !live(b.j)) continue;
+      if (Math.abs(mol.atoms[b.i].t - mol.atoms[b.j].t) >= THRESH) return b;
+    }
+    return null;
+  }
+  function findGoodPair() {
+    for (const b of mol.bonds) {
+      if (!live(b.i) || !live(b.j)) continue;
+      if (liveDeg(b.i) === 3 && liveDeg(b.j) === 3) return b;
+    }
+    return null;
+  }
+
+  /** one iteration of the loop of [H6] §1.4.2 */
+  function step() {
+    if (done() || stalled) return;
+    iter++;
+    const lb = findLongBond();
+    let raw = 0, note = '';
+    if (lb) {
+      removed.add(lb.i); removed.add(lb.j);
+      raw = LONG;
+      note = `long bond 𝔫${lb.i}–𝔫${lb.j} (Δt=${Math.abs(mol.atoms[lb.i].t - mol.atoms[lb.j].t).toFixed(2)}) → {3A} gain`;
+      if (immediate) { raw -= OBLIG; note += ', obligation paid now'; }
+      else deferred.push({ from: iter, cost: OBLIG });
+    } else {
+      const gp = findGoodPair();
+      if (gp) {
+        removed.add(gp.i); removed.add(gp.j);
+        raw = GOOD; note = `{33} pair 𝔫${gp.i}–𝔫${gp.j}`;
+      } else {
+        const liveAtoms = mol.atoms.filter(a => live(a.id));
+        if (!liveAtoms.length) return;
+        const a = liveAtoms.sort((p, q) => liveDeg(p.id) - liveDeg(q.id))[0];
+        const d = liveDeg(a.id);
+        removed.add(a.id);
+        raw = d >= 4 ? -PEN : 0;
+        note = d >= 4 ? `forced {4} at 𝔫${a.id} — penalty` : `{${d}} at 𝔫${a.id}, no gain`;
+        if (classicalOnly && d >= 4) stalled = true;
+      }
+    }
+    // service one deferred obligation out of this iteration's gain
+    let serviced = 0;
+    if (!immediate && deferred.length && raw > 0) {
+      const ob = deferred.shift(); serviced = ob.cost;
+    }
+    const net = raw - serviced;
+    ledger.push({ iter, raw, serviced, net, note });
+    phase = STEPS.length - 1;
+    draw();
+  }
+
+  function draw() {
+    // --- molecule ---
+    const W = ctx.W, H = ctx.H;
+    ctx.clearRect(0, 0, W, H);
+    const n = mol.atoms.length;
+    const pos = mol.atoms.map((a, k) => {
+      const ang = (k / n) * 2 * Math.PI - Math.PI / 2;
+      return [W / 2 + Math.cos(ang) * W * 0.30, H / 2 + Math.sin(ang) * H * 0.34];
+    });
+    mol.bonds.forEach(b => {
+      const dead = removed.has(b.i) || removed.has(b.j);
+      const isLong = Math.abs(mol.atoms[b.i].t - mol.atoms[b.j].t) >= THRESH;
+      ctx.strokeStyle = dead ? cssVar('--line') + '44'
+                      : isLong && !classicalOnly ? cssVar('--gold') : cssVar('--line');
+      ctx.lineWidth = isLong && !dead && !classicalOnly ? 4 : 1.4;
+      ctx.beginPath(); ctx.moveTo(pos[b.i][0], pos[b.i][1]); ctx.lineTo(pos[b.j][0], pos[b.j][1]); ctx.stroke();
+    });
+    mol.atoms.forEach((a, k) => {
+      const gone = removed.has(a.id), d = liveDeg(a.id);
+      ctx.globalAlpha = gone ? 0.2 : 1;
+      ctx.fillStyle = d >= 4 ? cssVar('--bad') : d === 3 ? cssVar('--good') : cssVar('--accent');
+      ctx.beginPath(); ctx.arc(pos[k][0], pos[k][1], 15, 0, 7); ctx.fill();
+      ctx.fillStyle = cssVar('--bg'); ctx.font = '600 12px ui-monospace, monospace'; ctx.textAlign = 'center';
+      ctx.fillText(String(d), pos[k][0], pos[k][1] + 4);
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = cssVar('--ink-dim'); ctx.font = '9px ui-monospace, monospace';
+      ctx.fillText('𝔫' + k + ' t=' + a.t.toFixed(2), pos[k][0], pos[k][1] - 21);
+    });
+
+    // --- steps ---
+    stepsEl.innerHTML = STEPS.map((s, i) =>
+      `<div style="padding:.15rem 0;color:${i === phase && iter ? 'var(--accent)' : 'var(--ink-dim)'}">
+        ${i === phase && iter ? '▶' : '&nbsp;&nbsp;'} ${i + 1}. ${s}</div>`).join('');
+
+    stackEl.innerHTML = deferred.length
+      ? deferred.map(o => `obligation from iteration ${o.from} · cost ${o.cost.toFixed(2)}`).join('<br>')
+      : '<span style="color:var(--ink-dim)">empty</span>';
+
+    // --- ledger chart ---
+    const W2 = cl.W, H2 = cl.H, pad = 34;
+    cl.clearRect(0, 0, W2, H2);
+    cl.strokeStyle = cssVar('--line');
+    const mid = H2 / 2;
+    cl.beginPath(); cl.moveTo(pad, mid); cl.lineTo(W2 - 10, mid); cl.stroke();
+    const N = Math.max(6, ledger.length);
+    const bw = (W2 - pad - 14) / N;
+    ledger.forEach((L, k) => {
+      const x = pad + k * bw;
+      const hR = (L.raw / 1.2) * (H2 / 2 - 14);
+      const hN = (L.net / 1.2) * (H2 / 2 - 14);
+      cl.fillStyle = cssVar('--accent') + '77';
+      cl.fillRect(x + 2, mid - Math.max(0, hR), bw * 0.42, Math.abs(hR));
+      if (hR < 0) cl.fillRect(x + 2, mid, bw * 0.42, -hR);
+      cl.fillStyle = (L.net >= 0 ? cssVar('--good') : cssVar('--bad'));
+      cl.fillRect(x + 2 + bw * 0.46, mid - Math.max(0, hN), bw * 0.42, Math.abs(hN));
+      if (hN < 0) cl.fillRect(x + 2 + bw * 0.46, mid, bw * 0.42, -hN);
+    });
+    cl.fillStyle = cssVar('--ink-dim'); cl.font = '10px ui-monospace, monospace'; cl.textAlign = 'left';
+    cl.fillText('iteration →', pad, H2 - 8);
+    cl.fillStyle = cssVar('--accent'); cl.fillText('raw gain', pad, 14);
+    cl.fillStyle = cssVar('--good'); cl.fillText('net after obligations', pad + 70, 14);
+
+    const total = ledger.reduce((s, L) => s + L.net, 0);
+    const minNet = ledger.length ? Math.min(...ledger.map(L => L.net)) : 0;
+    const rho = mol.circuitRank();
+    ro.set([
+      ['molecule', name],
+      ['mode', classicalOnly ? 'classical only' : (immediate ? 'immediate payment' : '[H6] deferral')],
+      ['iterations', iter],
+      ['atoms consumed', removed.size + ' / ' + mol.atoms.length],
+      ['circuit rank ρ', rho],
+      ['deferred obligations', deferred.length],
+      ['total net excess', total.toFixed(2), total >= GOOD * rho ? 'hi' : 'lo'],
+      ['target ≈ υ·ρ', (GOOD * rho).toFixed(2)],
+      ['worst net iteration', minNet.toFixed(2), minNet >= 0 ? 'hi' : 'lo'],
+      ['status', stalled ? 'STALLED' : done() ? (total >= GOOD * rho ? 'target met' : 'FAILED') : 'running',
+        stalled ? 'lo' : (done() && total >= GOOD * rho ? 'hi' : '')],
+      ['last action', ledger.length ? ledger[ledger.length - 1].note : '—'],
+    ]);
+  }
+
+  load(name);
+  window.addEventListener('resize', draw);
+  foot('Run "general case" three ways: with deferral (net trace stays non-negative and the target is met), with immediate payment (the net trace dips below zero), and classical-only (no long bonds — it stalls, which is the gap [H6] §1.4 exists to fill). Scoring constants are the caricature of <a href="../lectures/10-cutting-operations.md">Lecture 10</a> §7.');
+});
+</script>
+</body>
+</html>
