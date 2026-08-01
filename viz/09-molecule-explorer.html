@@ -93,13 +93,14 @@ window.addEventListener('DOMContentLoaded', function () {
     sorted.forEach(ev => {
       const a = mol.addAtom({ t: ev.t, kind: 'C' });
       for (const li of [ev.a, ev.b]) {
+        // A bottom end reaches down to the initial data, so it is a FIXED end and
+        // is excluded from the degree ([LT]: degree = bonds + free ends, excluding
+        // fixed ends). Only bonds and open top ends count.
         if (last.has(li)) mol.addBond(last.get(li), a.id, { line: li });
-        else a.freeEnds = (a.freeEnds || 0) + 1;      // dangling bottom end
         last.set(li, a.id);
       }
-      // each atom also has a top end for each of its two lines until superseded
     });
-    // add a free end for every line that is still open at the top
+    // every line still open at the top contributes one FREE end
     last.forEach((atomId) => { mol.atoms[atomId].freeEnds = (mol.atoms[atomId].freeEnds || 0) + 1; });
     return { mol, sorted };
   }
@@ -163,8 +164,10 @@ window.addEventListener('DOMContentLoaded', function () {
     const W2 = cm.W, H2 = cm.H, p2 = 34;
     cm.clearRect(0, 0, W2, H2);
     const n = mol.atoms.length;
+    // y is the collision time; x is spread by a golden-ratio sequence so that
+    // atoms never end up collinear (which would hide bonds behind one another)
     const P = mol.atoms.map((a, k) => [
-      p2 + (n === 1 ? .5 : k / (n - 1)) * (W2 - 2 * p2),
+      p2 + (n === 1 ? .5 : ((k * 0.6180339887) % 1)) * (W2 - 2 * p2),
       H2 - p2 - a.t * (H2 - 2 * p2),
     ]);
     const longs = new Set(mol.longBonds(longThresh).map(b => b.id));
